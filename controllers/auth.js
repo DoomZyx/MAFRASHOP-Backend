@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.js";
+import { validateCompanyAsync } from "../middleware/auth.js";
 
 const generateToken = (userId) => {
   if (!process.env.JWT_SECRET) {
@@ -176,14 +177,19 @@ export const googleCallback = async (request, reply) => {
     if (!user) {
       user = await User.findOne({ email: googleUser.email });
 
-      if (user && user.authProvider !== "google") {
-        return reply.code(400).send({
-          success: false,
-          message: "Un compte existe déjà avec cet email",
-        });
-      }
-
-      if (!user) {
+      if (user) {
+        // Si un compte existe avec cet email, lier le compte Google
+        if (!user.googleId) {
+          user.googleId = googleUser.id;
+          user.authProvider = "google"; // Permet aussi la connexion Google
+        }
+        // Mettre à jour l'avatar si nécessaire
+        if (googleUser.picture && user.avatar !== googleUser.picture) {
+          user.avatar = googleUser.picture;
+        }
+        await user.save();
+      } else {
+        // Nouveau compte, créer l'utilisateur
         user = new User({
           email: googleUser.email,
           firstName: googleUser.given_name || "Utilisateur",
@@ -194,10 +200,6 @@ export const googleCallback = async (request, reply) => {
           isVerified: true,
         });
 
-        await user.save();
-      } else {
-        user.googleId = googleUser.id;
-        user.avatar = googleUser.picture;
         await user.save();
       }
     } else {
@@ -257,4 +259,74 @@ export const logout = async (request, reply) => {
     success: true,
     message: "Déconnexion réussie",
   });
+};
+
+export const requestPro = async (request, reply) => {
+  const user = request.user;
+  const { companyName, siret } = request.body;
+
+  if (!companyName || !siret) {
+    return reply.code(400).send({ message: "Données manquantes" });
+  }
+
+  if (user.proStatus !== "none") {
+    return reply.code(400).send({ message: "Demande déjà traitée" });
+  }
+
+  user.company = { name: companyName, siret };
+  user.proStatus = "processing";
+  user.isPro = false;
+
+  await user.save();
+
+  validateCompanyAsync(user._id, siret);
+
+  return reply.code(200).send({
+    message: "Vérification en cours",
+  });
+};
+
+export const updateProfile = async (request, reply) => {
+  try {
+    const { firstName, lastName, address, city, zipCode, phone } = request.body;
+    const userId = request.user._id;
+
+    if (!firstName || !lastName || !address || !city || !zipCode || !phone) {
+      return reply.code(400).send({
+        success: false,
+        message: "Tous les champs sont requis",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return reply.code(404).send({
+        success: false,
+        message: "Utilisateur introuvable",
+      });
+    }
+
+    user.firstName = firstName;
+    user.lastName = lastName;
+    user.address = address;
+    user.city = city;
+    user.zipCode = zipCode;
+    user.phone = phone;
+
+    await user.save();
+
+    reply.send({
+      success: true,
+      message: "Profil mis a jour avec succes",
+      data: {
+        user: user.toJSON(),
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la mise a jour du profil:", error);
+    reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la MAJ du profile",
+    });
+  }
 };

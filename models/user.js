@@ -24,6 +24,18 @@ const userSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    phone: {
+      type: String,
+    },
+    address: {
+      type: String,
+    },
+    city: {
+      type: String,
+    },
+    zipCode: {
+      type: String,
+    },
     avatar: {
       type: String,
       default: null,
@@ -46,6 +58,26 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ["user", "admin"],
       default: "user",
+    },
+    isPro: {
+      type: Boolean,
+      default: false,
+    },
+
+    proStatus: {
+      type: String,
+      enum: ["none", "pending", "validated", "rejected"],
+      default: "none",
+    },
+
+    company: {
+      name: { type: String },
+      siret: { type: String },
+      address: { type: String },
+      city: { type: String },
+      zipCode: { type: String },
+      phone: { type: String },
+      email: { type: String },
     },
   },
   {

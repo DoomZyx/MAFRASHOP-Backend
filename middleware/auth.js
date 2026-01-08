@@ -81,4 +81,20 @@ export const isAdmin = async (request, reply) => {
   }
 };
 
+export const validateCompanyAsync = async (userId, siret) => {
+  try {
+    const isValid = await callInseeAPI(siret);
+
+    await User.findByIdAndUpdate(userId, {
+      proStatus: isValid ? 'validated' : 'rejected',
+      isPro: isValid,
+    });
+  } catch (err) {
+    await User.findByIdAndUpdate(userId, {
+      proStatus: 'rejected',
+      isPro: false,
+    });
+  }
+};
+
 
