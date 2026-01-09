@@ -36,6 +36,7 @@ await fastify.register(cors, {
       "http://localhost:5173",
       "http://192.168.1.14:5173",
       "http://172.31.112.1:5173",
+      "mafrashop-frontend.vercel.app"
     ];
 
     // Autoriser les requêtes sans origin (comme Postman, curl, etc.)
