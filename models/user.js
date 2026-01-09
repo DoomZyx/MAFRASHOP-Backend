@@ -79,6 +79,19 @@ const userSchema = new mongoose.Schema(
       phone: { type: String },
       email: { type: String },
     },
+    cart: [
+      {
+        productId: { type: mongoose.Schema.Types.ObjectId, ref: "Products" },
+        quantity: { type: Number, default: 1 },
+        addedAt: { type: Date, default: Date.now },
+      },
+    ],
+    favorites: [
+      {
+        productId: { type: mongoose.Schema.Types.ObjectId, ref: "Products" },
+        addedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   {
     timestamps: true,

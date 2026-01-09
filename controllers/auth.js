@@ -262,28 +262,174 @@ export const logout = async (request, reply) => {
 };
 
 export const requestPro = async (request, reply) => {
-  const user = request.user;
-  const { companyName, siret } = request.body;
+  try {
+    const user = request.user;
+    const { companyName, siret, address, city, zipCode } = request.body;
 
-  if (!companyName || !siret) {
-    return reply.code(400).send({ message: "Données manquantes" });
+    if (!companyName || !siret) {
+      return reply.code(400).send({
+        success: false,
+        message: "Le nom de l'entreprise et le SIRET sont requis",
+      });
+    }
+
+    // Vérification du format du SIRET
+    if (siret.length !== 14 || !/^\d+$/.test(siret)) {
+      return reply.code(400).send({
+        success: false,
+        message: "Le SIRET doit contenir exactement 14 chiffres",
+      });
+    }
+
+    if (
+      user.proStatus !== "none" &&
+      user.proStatus !== "rejected" &&
+      user.proStatus !== "pending"
+    ) {
+      return reply.code(400).send({
+        success: false,
+        message:
+          "Une demande de validation professionnelle est déjà en cours ou validée",
+      });
+    }
+
+    user.company = {
+      name: companyName.trim(),
+      siret: siret,
+      address: address?.trim() || user.company?.address || "",
+      city: city?.trim() || user.company?.city || "",
+      zipCode: zipCode?.trim() || user.company?.zipCode || "",
+      ...user.company, // Conserver les autres champs existants (phone, email)
+    };
+    user.proStatus = "pending";
+    user.isPro = false;
+
+    await user.save();
+
+    // Préparer les données supplémentaires pour la validation
+    const additionalData = {
+      address: user.company.address || undefined,
+      city: user.company.city || undefined,
+      zipCode: user.company.zipCode || undefined,
+    };
+
+    // Lancement de la validation en asynchrone (ne bloque pas la réponse)
+    validateCompanyAsync(
+      user._id,
+      siret,
+      companyName.trim(),
+      additionalData
+    ).catch((err) => {
+      console.error(
+        `Erreur lors de la validation asynchrone pour l'utilisateur ${user._id}:`,
+        err
+      );
+    });
+
+    return reply.code(200).send({
+      success: true,
+      message: "Demande de validation professionnelle en cours de traitement",
+    });
+  } catch (error) {
+    console.error("Erreur lors de la demande pro:", error);
+    return reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la demande de validation professionnelle",
+    });
   }
+};
 
-  if (user.proStatus !== "none") {
-    return reply.code(400).send({ message: "Demande déjà traitée" });
+export const validateProManually = async (request, reply) => {
+  try {
+    const { userId, approved } = request.body;
+
+    if (!userId) {
+      return reply.code(400).send({
+        success: false,
+        message: "L'ID de l'utilisateur est requis",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return reply.code(404).send({
+        success: false,
+        message: "Utilisateur introuvable",
+      });
+    }
+
+    // Validation manuelle : approuver ou rejeter
+    user.proStatus = approved ? "validated" : "rejected";
+    user.isPro = approved || false;
+
+    await user.save();
+
+    return reply.code(200).send({
+      success: true,
+      message: approved
+        ? "Compte professionnel validé avec succès"
+        : "Compte professionnel rejeté",
+      data: {
+        user: user.toJSON(),
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la validation manuelle:", error);
+    return reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la validation",
+    });
   }
+};
 
-  user.company = { name: companyName, siret };
-  user.proStatus = "processing";
-  user.isPro = false;
+export const testProRequest = async (request, reply) => {
+  try {
+    const userId = request.user._id;
+    const { companyName, siret, address, city, zipCode } = request.body;
 
-  await user.save();
+    if (!companyName || !siret) {
+      return reply.code(400).send({
+        success: false,
+        message: "Le nom de l'entreprise et le SIRET sont requis",
+      });
+    }
 
-  validateCompanyAsync(user._id, siret);
+    const user = await User.findById(userId);
+    if (!user) {
+      return reply.code(404).send({
+        success: false,
+        message: "Utilisateur introuvable",
+      });
+    }
 
-  return reply.code(200).send({
-    message: "Vérification en cours",
-  });
+    // Mode test : valider automatiquement sans vérification INSEE
+    user.company = {
+      name: companyName.trim(),
+      siret: siret,
+      address: address?.trim() || "",
+      city: city?.trim() || "",
+      zipCode: zipCode?.trim() || "",
+      ...user.company,
+    };
+    user.proStatus = "validated";
+    user.isPro = true;
+
+    await user.save();
+
+    return reply.code(200).send({
+      success: true,
+      message: "Compte professionnel validé en mode test (sans vérification INSEE)",
+      data: {
+        user: user.toJSON(),
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la demande pro test:", error);
+    return reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la demande de validation professionnelle",
+    });
+  }
 };
 
 export const updateProfile = async (request, reply) => {

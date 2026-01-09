@@ -5,6 +5,12 @@ import cors from "@fastify/cors";
 import mongoose from "mongoose";
 import productsRoutes from "./routes/products.js";
 import authRoutes from "./routes/auth.js";
+import cartRoutes from "./routes/cart.js";
+import favoritesRoutes from "./routes/favorites.js";
+import websocketRoutes from "./routes/websocket.js";
+import { sendToUser } from "./routes/websocket.js";
+
+export { sendToUser };
 
 async function connectDB() {
   try {
@@ -26,11 +32,10 @@ const fastify = Fastify();
 
 await fastify.register(cors, {
   origin: (origin, cb) => {
-    // Autoriser localhost et toutes les adresses réseau du frontend
     const allowedOrigins = [
       "http://localhost:5173",
-      /^http:\/\/192\.168\.\d+\.\d+:5173$/,
-      /^http:\/\/172\.\d+\.\d+\.\d+:5173$/,
+      "http://192.168.1.14:5173",
+      "http://172.31.112.1:5173",
     ];
 
     // Autoriser les requêtes sans origin (comme Postman, curl, etc.)
@@ -56,7 +61,22 @@ await fastify.register(cors, {
   credentials: true,
 });
 
+// Hook pour capturer les erreurs
+fastify.setErrorHandler((error, request, reply) => {
+  console.error("ERREUR:", error.message || "Erreur serveur");
+  if (process.env.NODE_ENV === "development") {
+    console.error("Stack:", error.stack);
+  }
+  reply.code(error.statusCode || 500).send({
+    success: false,
+    message: error.message || "Erreur serveur",
+  });
+});
+
 fastify.register(productsRoutes);
 fastify.register(authRoutes);
+fastify.register(cartRoutes);
+fastify.register(favoritesRoutes);
+fastify.register(websocketRoutes);
 
 export default fastify;
