@@ -17,12 +17,11 @@ export const register = async (request, reply) => {
     if (!email || !password || !firstName || !lastName) {
       return reply.code(400).send({
         success: false,
-
         message: "Tous les champs sont requis",
       });
     }
 
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findByEmail(email);
     if (existingUser) {
       return reply.code(400).send({
         success: false,
@@ -30,7 +29,7 @@ export const register = async (request, reply) => {
       });
     }
 
-    const user = new User({
+    const user = await User.create({
       email,
       password,
       firstName,
@@ -38,20 +37,20 @@ export const register = async (request, reply) => {
       authProvider: "local",
     });
 
-    await user.save();
+    const token = generateToken(user.id);
 
-    const token = generateToken(user._id);
-
+    reply.type("application/json");
     reply.send({
       success: true,
       message: "Inscription réussie",
       data: {
-        user: user.toJSON(),
+        user: User.toJSON(user),
         token,
       },
     });
   } catch (error) {
     console.error("Erreur lors de l'inscription:", error);
+    reply.type("application/json");
     reply.code(500).send({
       success: false,
       message: "Erreur lors de l'inscription",
@@ -70,7 +69,7 @@ export const login = async (request, reply) => {
       });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findByEmail(email);
     if (!user) {
       return reply.code(401).send({
         success: false,
@@ -85,7 +84,7 @@ export const login = async (request, reply) => {
       });
     }
 
-    const isPasswordValid = await user.comparePassword(password);
+    const isPasswordValid = await User.comparePassword(user.id, password);
     if (!isPasswordValid) {
       return reply.code(401).send({
         success: false,
@@ -93,18 +92,20 @@ export const login = async (request, reply) => {
       });
     }
 
-    const token = generateToken(user._id);
+    const token = generateToken(user.id);
 
+    reply.type("application/json");
     reply.send({
       success: true,
       message: "Connexion réussie",
       data: {
-        user: user.toJSON(),
+        user: User.toJSON(user),
         token,
       },
     });
   } catch (error) {
     console.error("Erreur lors de la connexion:", error);
+    reply.type("application/json");
     reply.code(500).send({
       success: false,
       message: "Erreur lors de la connexion",
@@ -172,25 +173,27 @@ export const googleCallback = async (request, reply) => {
       });
     }
 
-    let user = await User.findOne({ googleId: googleUser.id });
+    let user = await User.findByGoogleId(googleUser.id);
 
     if (!user) {
-      user = await User.findOne({ email: googleUser.email });
+      user = await User.findByEmail(googleUser.email);
 
       if (user) {
         // Si un compte existe avec cet email, lier le compte Google
-        if (!user.googleId) {
-          user.googleId = googleUser.id;
-          user.authProvider = "google"; // Permet aussi la connexion Google
-        }
-        // Mettre à jour l'avatar si nécessaire
+        const updateData = {
+          googleId: googleUser.id,
+          authProvider: "google",
+        };
+
         if (googleUser.picture && user.avatar !== googleUser.picture) {
-          user.avatar = googleUser.picture;
+          updateData.avatar = googleUser.picture;
         }
-        await user.save();
+
+        await User.update(user.id, updateData);
+        user = await User.findById(user.id);
       } else {
         // Nouveau compte, créer l'utilisateur
-        user = new User({
+        user = await User.create({
           email: googleUser.email,
           firstName: googleUser.given_name || "Utilisateur",
           lastName: googleUser.family_name || "Google",
@@ -199,28 +202,28 @@ export const googleCallback = async (request, reply) => {
           authProvider: "google",
           isVerified: true,
         });
-
-        await user.save();
       }
     } else {
       if (googleUser.picture && user.avatar !== googleUser.picture) {
-        user.avatar = googleUser.picture;
-        await user.save();
+        await User.update(user.id, { avatar: googleUser.picture });
+        user = await User.findById(user.id);
       }
     }
 
-    const token = generateToken(user._id);
+    const token = generateToken(user.id);
 
+    reply.type("application/json");
     reply.send({
       success: true,
       message: "Authentification Google réussie",
       data: {
-        user: user.toJSON(),
+        user: User.toJSON(user),
         token,
       },
     });
   } catch (error) {
     console.error("Erreur lors de l'authentification Google:", error);
+    reply.type("application/json");
     reply.code(500).send({
       success: false,
       message: "Erreur lors de l'authentification Google",
@@ -230,7 +233,7 @@ export const googleCallback = async (request, reply) => {
 
 export const getMe = async (request, reply) => {
   try {
-    const user = await User.findById(request.user._id).select("-password");
+    const user = await User.findById(request.user.id);
 
     if (!user) {
       return reply.code(404).send({
@@ -239,14 +242,16 @@ export const getMe = async (request, reply) => {
       });
     }
 
+    reply.type("application/json");
     reply.send({
       success: true,
       data: {
-        user: user.toJSON(),
+        user: User.toJSON(user),
       },
     });
   } catch (error) {
     console.error("Erreur lors de la récupération du profil:", error);
+    reply.type("application/json");
     reply.code(500).send({
       success: false,
       message: "Erreur serveur",
@@ -255,6 +260,7 @@ export const getMe = async (request, reply) => {
 };
 
 export const logout = async (request, reply) => {
+  reply.type("application/json");
   reply.send({
     success: true,
     message: "Déconnexion réussie",
@@ -293,45 +299,49 @@ export const requestPro = async (request, reply) => {
       });
     }
 
-    user.company = {
-      name: companyName.trim(),
-      siret: siret,
-      address: address?.trim() || user.company?.address || "",
-      city: city?.trim() || user.company?.city || "",
-      zipCode: zipCode?.trim() || user.company?.zipCode || "",
-      ...user.company, // Conserver les autres champs existants (phone, email)
+    const updateData = {
+      company: {
+        ...(user.company || {}),
+        name: companyName.trim(),
+        siret: siret,
+        address: address?.trim() || user.company?.address || "",
+        city: city?.trim() || user.company?.city || "",
+        zipCode: zipCode?.trim() || user.company?.zipCode || "",
+      },
+      proStatus: "pending",
+      isPro: false,
     };
-    user.proStatus = "pending";
-    user.isPro = false;
 
-    await user.save();
+    await User.update(user.id, updateData);
 
     // Préparer les données supplémentaires pour la validation
     const additionalData = {
-      address: user.company.address || undefined,
-      city: user.company.city || undefined,
-      zipCode: user.company.zipCode || undefined,
+      address: updateData.company.address || undefined,
+      city: updateData.company.city || undefined,
+      zipCode: updateData.company.zipCode || undefined,
     };
 
     // Lancement de la validation en asynchrone (ne bloque pas la réponse)
     validateCompanyAsync(
-      user._id,
+      user.id,
       siret,
       companyName.trim(),
       additionalData
     ).catch((err) => {
       console.error(
-        `Erreur lors de la validation asynchrone pour l'utilisateur ${user._id}:`,
+        `Erreur lors de la validation asynchrone pour l'utilisateur ${user.id}:`,
         err
       );
     });
 
+    reply.type("application/json");
     return reply.code(200).send({
       success: true,
       message: "Demande de validation professionnelle en cours de traitement",
     });
   } catch (error) {
     console.error("Erreur lors de la demande pro:", error);
+    reply.type("application/json");
     return reply.code(500).send({
       success: false,
       message: "Erreur lors de la demande de validation professionnelle",
@@ -359,22 +369,24 @@ export const validateProManually = async (request, reply) => {
     }
 
     // Validation manuelle : approuver ou rejeter
-    user.proStatus = approved ? "validated" : "rejected";
-    user.isPro = approved || false;
+    const updatedUser = await User.update(user.id, {
+      proStatus: approved ? "validated" : "rejected",
+      isPro: approved || false,
+    });
 
-    await user.save();
-
+    reply.type("application/json");
     return reply.code(200).send({
       success: true,
       message: approved
         ? "Compte professionnel validé avec succès"
         : "Compte professionnel rejeté",
       data: {
-        user: user.toJSON(),
+        user: User.toJSON(updatedUser),
       },
     });
   } catch (error) {
     console.error("Erreur lors de la validation manuelle:", error);
+    reply.type("application/json");
     return reply.code(500).send({
       success: false,
       message: "Erreur lors de la validation",
@@ -384,7 +396,7 @@ export const validateProManually = async (request, reply) => {
 
 export const testProRequest = async (request, reply) => {
   try {
-    const userId = request.user._id;
+    const userId = request.user.id;
     const { companyName, siret, address, city, zipCode } = request.body;
 
     if (!companyName || !siret) {
@@ -403,28 +415,30 @@ export const testProRequest = async (request, reply) => {
     }
 
     // Mode test : valider automatiquement sans vérification INSEE
-    user.company = {
-      name: companyName.trim(),
-      siret: siret,
-      address: address?.trim() || "",
-      city: city?.trim() || "",
-      zipCode: zipCode?.trim() || "",
-      ...user.company,
-    };
-    user.proStatus = "validated";
-    user.isPro = true;
+    const updatedUser = await User.update(user.id, {
+      company: {
+        ...(user.company || {}),
+        name: companyName.trim(),
+        siret: siret,
+        address: address?.trim() || "",
+        city: city?.trim() || "",
+        zipCode: zipCode?.trim() || "",
+      },
+      proStatus: "validated",
+      isPro: true,
+    });
 
-    await user.save();
-
+    reply.type("application/json");
     return reply.code(200).send({
       success: true,
       message: "Compte professionnel validé en mode test (sans vérification INSEE)",
       data: {
-        user: user.toJSON(),
+        user: User.toJSON(updatedUser),
       },
     });
   } catch (error) {
     console.error("Erreur lors de la demande pro test:", error);
+    reply.type("application/json");
     return reply.code(500).send({
       success: false,
       message: "Erreur lors de la demande de validation professionnelle",
@@ -435,7 +449,7 @@ export const testProRequest = async (request, reply) => {
 export const updateProfile = async (request, reply) => {
   try {
     const { firstName, lastName, address, city, zipCode, phone } = request.body;
-    const userId = request.user._id;
+    const userId = request.user.id;
 
     if (!firstName || !lastName || !address || !city || !zipCode || !phone) {
       return reply.code(400).send({
@@ -452,24 +466,26 @@ export const updateProfile = async (request, reply) => {
       });
     }
 
-    user.firstName = firstName;
-    user.lastName = lastName;
-    user.address = address;
-    user.city = city;
-    user.zipCode = zipCode;
-    user.phone = phone;
+    const updatedUser = await User.update(userId, {
+      firstName,
+      lastName,
+      address,
+      city,
+      zipCode,
+      phone,
+    });
 
-    await user.save();
-
+    reply.type("application/json");
     reply.send({
       success: true,
       message: "Profil mis a jour avec succes",
       data: {
-        user: user.toJSON(),
+        user: User.toJSON(updatedUser),
       },
     });
   } catch (error) {
     console.error("Erreur lors de la mise a jour du profil:", error);
+    reply.type("application/json");
     reply.code(500).send({
       success: false,
       message: "Erreur lors de la MAJ du profile",

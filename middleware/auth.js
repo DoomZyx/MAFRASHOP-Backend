@@ -20,7 +20,7 @@ export const verifyToken = async (request, reply) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select("-password");
+    const user = await User.findById(decoded.userId);
     
     if (!user) {
       return reply.code(401).send({ 
@@ -54,8 +54,13 @@ export const optionalAuth = async (request, reply) => {
     }
 
     const token = authHeader.split(" ")[1];
+    
+    if (!process.env.JWT_SECRET) {
+      return;
+    }
+    
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select("-password");
+    const user = await User.findById(decoded.userId);
     
     if (user) {
       request.user = user;
@@ -102,22 +107,23 @@ export const validateCompanyAsync = async (userId, siret, companyName, additiona
       validationData
     );
 
+    // Préparer les données de mise à jour
     const updateData = {
       proStatus: result.valid ? "validated" : "rejected",
       isPro: result.valid,
+      company: {
+        // Gérer le cas où user.company est null
+        ...(user.company || {}),
+        name: result.companyName || user.company?.name || companyName,
+        siret: siret,
+        address: result.address || user.company?.address || additionalData.address || "",
+        city: result.city || user.company?.city || additionalData.city || "",
+        zipCode: result.zipCode || user.company?.zipCode || additionalData.zipCode || "",
+      },
     };
 
-    // Mettre à jour les informations de l'entreprise (toujours avec les données INSEE si disponibles)
-    updateData.company = {
-      ...user.company,
-      name: result.companyName || user.company?.name,
-      siret: siret,
-      address: result.address || user.company?.address || "",
-      city: result.city || user.company?.city || "",
-      zipCode: result.zipCode || user.company?.zipCode || "",
-    };
-
-    await User.findByIdAndUpdate(userId, updateData);
+    // Utiliser User.update au lieu de findByIdAndUpdate
+    await User.update(userId, updateData);
 
     if (!result.valid) {
       const warnings = result.warnings ? ` Avertissements: ${result.warnings.join(", ")}` : "";
@@ -132,11 +138,9 @@ export const validateCompanyAsync = async (userId, siret, companyName, additiona
     }
   } catch (err) {
     console.error(`Erreur lors de la validation pour l'utilisateur ${userId}:`, err);
-    await User.findByIdAndUpdate(userId, {
+    await User.update(userId, {
       proStatus: "rejected",
       isPro: false,
     });
   }
 };
-
-

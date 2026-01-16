@@ -1,30 +1,22 @@
-import User from "../models/user.js";
+import Favorites from "../models/favorites.js";
 import Product from "../models/products.js";
-import mongoose from "mongoose";
 import { sendToUser } from "../app.js";
 
 export const getFavorites = async (request, reply) => {
   try {
-    const user = await User.findById(request.user._id).populate(
-      "favorites.productId"
-    );
+    const favorites = await Favorites.findByUserId(request.user.id);
 
-    if (!user) {
-      return reply.code(404).send({
-        success: false,
-        message: "Utilisateur introuvable",
-      });
-    }
-
-    reply.send({
+    reply.type("application/json");
+    return reply.send({
       success: true,
       data: {
-        favorites: user.favorites || [],
+        favorites: favorites || [],
       },
     });
   } catch (error) {
     console.error("Erreur lors de la récupération des favoris:", error);
-    reply.code(500).send({
+    reply.type("application/json");
+    return reply.code(500).send({
       success: false,
       message: "Erreur lors de la récupération des favoris",
     });
@@ -36,67 +28,53 @@ export const addToFavorites = async (request, reply) => {
     const { productId } = request.body;
 
     if (!productId) {
+      reply.type("application/json");
       return reply.code(400).send({
         success: false,
         message: "ID du produit requis",
       });
     }
 
+    // Vérifier que le produit existe
     const product = await Product.findById(productId);
     if (!product) {
+      reply.type("application/json");
       return reply.code(404).send({
         success: false,
         message: "Produit introuvable",
       });
     }
 
-    const user = await User.findById(request.user._id);
-    if (!user) {
-      return reply.code(404).send({
-        success: false,
-        message: "Utilisateur introuvable",
-      });
-    }
-
-    const isAlreadyFavorite = user.favorites.some(
-      (fav) => fav.productId && fav.productId.toString() === productId
-    );
-
-    if (isAlreadyFavorite) {
-      return reply.code(400).send({
-        success: false,
-        message: "Le produit est déjà dans les favoris",
-      });
-    }
-
-    user.favorites.push({
-      productId: productId,
-    });
-
-    await user.save();
+    const favorites = await Favorites.addItem(request.user.id, productId);
 
     // Envoyer une mise à jour WebSocket
-    const updatedUser = await User.findById(request.user._id).populate(
-      "favorites.productId"
-    );
-    if (updatedUser) {
-      sendToUser(request.user._id.toString(), "favorites:updated", {
-        favorites: updatedUser.favorites,
-      });
-    }
+    sendToUser(request.user.id.toString(), "favorites:updated", {
+      favorites: favorites,
+    });
 
-    reply.send({
+    reply.type("application/json");
+    return reply.send({
       success: true,
       message: "Produit ajouté aux favoris",
       data: {
-        favorites: user.favorites,
+        favorites: favorites,
       },
     });
   } catch (error) {
     console.error("Erreur lors de l'ajout aux favoris:", error);
-    reply.code(500).send({
+    reply.type("application/json");
+    
+    if (error.message === "Le produit est déjà dans les favoris") {
+      return reply.code(400).send({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return reply.code(500).send({
       success: false,
       message: "Erreur lors de l'ajout aux favoris",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
@@ -106,79 +84,43 @@ export const removeFromFavorites = async (request, reply) => {
     const { productId } = request.params;
 
     if (!productId) {
+      reply.type("application/json");
       return reply.code(400).send({
         success: false,
         message: "ID du produit requis",
       });
     }
 
-    if (!mongoose.Types.ObjectId.isValid(productId)) {
-      return reply.code(400).send({
-        success: false,
-        message: "ID du produit invalide",
-      });
-    }
-
-    const user = await User.findById(request.user._id);
-    if (!user) {
-      return reply.code(404).send({
-        success: false,
-        message: "Utilisateur introuvable",
-      });
-    }
-
-    const initialLength = user.favorites.length;
-    const productObjectId = new mongoose.Types.ObjectId(productId);
-
-    // Filtrer les favoris
-    // @ts-ignore - Mongoose DocumentArray type limitation
-    user.favorites = user.favorites.filter((fav) => {
-      if (!fav.productId) return true;
-      const favProductId =
-        fav.productId instanceof mongoose.Types.ObjectId
-          ? fav.productId
-          : new mongoose.Types.ObjectId(String(fav.productId));
-      return !favProductId.equals(productObjectId);
-    });
-
-    if (user.favorites.length === initialLength) {
-      return reply.code(404).send({
-        success: false,
-        message: "Produit non trouvé dans les favoris",
-      });
-    }
-
-    await user.save();
-
-    const updatedUser = await User.findById(request.user._id).populate(
-      "favorites.productId"
-    );
-
-    if (!updatedUser) {
-      return reply.code(404).send({
-        success: false,
-        message: "Utilisateur introuvable après mise à jour",
-      });
-    }
+    const favorites = await Favorites.removeItem(request.user.id, productId);
 
     // Envoyer une mise à jour WebSocket
-    sendToUser(request.user._id.toString(), "favorites:updated", {
-      favorites: updatedUser.favorites || [],
+    sendToUser(request.user.id.toString(), "favorites:updated", {
+      favorites: favorites,
     });
 
-    reply.send({
+    reply.type("application/json");
+    return reply.send({
       success: true,
       message: "Produit retiré des favoris",
       data: {
-        favorites: updatedUser.favorites || [],
+        favorites: favorites,
       },
     });
   } catch (error) {
     console.error("Erreur lors de la suppression des favoris:", error);
-    reply.code(500).send({
+    reply.type("application/json");
+    
+    if (error.message === "Produit non trouvé dans les favoris") {
+      return reply.code(404).send({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return reply.code(500).send({
       success: false,
       message: "Erreur lors de la suppression des favoris",
-      error: error.message,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
