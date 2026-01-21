@@ -39,12 +39,7 @@ const fastify = Fastify({
 // Enregistrer CORS
 await fastify.register(cors, {
   origin: (origin, cb) => {
-    const allowedOrigins = [
-      "http://localhost:5173",
-      "http://192.168.1.14:5173",
-      "http://172.31.112.1:5173",
-      "https://mafrashop-frontend.vercel.app",
-    ];
+    const allowedOrigins = config.CORS_ORIGINS;
 
     if (!origin) {
       cb(null, true);
@@ -59,10 +54,11 @@ await fastify.register(cors, {
     if (isAllowed) {
       cb(null, true);
     } else {
+      console.warn(`CORS: Origine non autorisée: ${origin}`);
       cb(new Error("Not allowed by CORS"), false);
     }
   },
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
   credentials: true,
 });

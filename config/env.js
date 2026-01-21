@@ -60,6 +60,21 @@ const databaseConfig = process.env.DATABASE_URL
   ? parseDatabaseUrl(process.env.DATABASE_URL)
   : null;
 
+// Parser les origines CORS (séparées par des virgules)
+const parseCorsOrigins = () => {
+  const corsOrigins = process.env.CORS_ORIGINS;
+  if (!corsOrigins) {
+    // Origines par défaut pour le développement
+    return [
+      "http://localhost:5173",
+      "http://192.168.1.14:5173",
+      "http://172.31.112.1:5173",
+    ];
+  }
+  // Séparer par virgule et nettoyer les espaces
+  return corsOrigins.split(",").map(origin => origin.trim()).filter(origin => origin);
+};
+
 export const config = {
   NODE_ENV: env,
   PORT: process.env.PORT || 8080,
@@ -69,6 +84,8 @@ export const config = {
   POSTGRES_DB: databaseConfig?.database || process.env.POSTGRES_DB,
   POSTGRES_USER: databaseConfig?.user || process.env.POSTGRES_USER,
   POSTGRES_PASSWORD: databaseConfig?.password || process.env.POSTGRES_PASSWORD,
+  // CORS
+  CORS_ORIGINS: parseCorsOrigins(),
   // JWT
   JWT_SECRET: process.env.JWT_SECRET,
   // Google OAuth
@@ -88,6 +105,7 @@ console.log("📋 Configuration chargée:", {
   POSTGRES_PORT: config.POSTGRES_PORT,
   POSTGRES_DB: config.POSTGRES_DB,
   POSTGRES_USER: config.POSTGRES_USER,
+  CORS_ORIGINS: config.CORS_ORIGINS,
   JWT_SECRET: config.JWT_SECRET ? "défini" : "manquant",
   GOOGLE_CLIENT_ID: config.GOOGLE_CLIENT_ID ? "défini" : "manquant",
 });
