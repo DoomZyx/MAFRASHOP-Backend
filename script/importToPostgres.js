@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+import { config } from "../config/env.js";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import fs from "fs";
@@ -9,23 +9,10 @@ import pg from "pg";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Charger le .env depuis le dossier backend (parent)
-// Essaie d'abord .env.dev, puis .env
-const envPath = join(__dirname, "..", ".env.dev");
-const envPathFallback = join(__dirname, "..", ".env");
-
-if (fs.existsSync(envPath)) {
-  dotenv.config({ path: envPath });
-} else if (fs.existsSync(envPathFallback)) {
-  dotenv.config({ path: envPathFallback });
-} else {
-  dotenv.config();
-}
-
 const { Client } = pg;
 
 // Validation des variables d'environnement
-if (!process.env.POSTGRES_PASSWORD) {
+if (!config.POSTGRES_PASSWORD) {
   console.error("ERREUR : POSTGRES_PASSWORD manquant dans .env");
   console.error(
     "Vérifie que ton fichier .env contient : POSTGRES_PASSWORD=ton_mot_de_passe"
@@ -33,20 +20,20 @@ if (!process.env.POSTGRES_PASSWORD) {
   process.exit(1);
 }
 
-if (!process.env.POSTGRES_DB) {
+if (!config.POSTGRES_DB) {
   console.error("ERREUR : POSTGRES_DB manquant dans .env");
   process.exit(1);
 }
 
 // Récupérer l'utilisateur (forcer "postgres" si non défini)
-const postgresUser = process.env.POSTGRES_USER || "postgres";
+const postgresUser = config.POSTGRES_USER || "postgres";
 
 const client = new Client({
-  host: process.env.POSTGRES_HOST || "localhost",
-  port: parseInt(process.env.POSTGRES_PORT || "5432", 10),
-  database: process.env.POSTGRES_DB,
+  host: config.POSTGRES_HOST || "localhost",
+  port: config.POSTGRES_PORT,
+  database: config.POSTGRES_DB,
   user: postgresUser,
-  password: process.env.POSTGRES_PASSWORD,
+  password: config.POSTGRES_PASSWORD,
 });
 
 // Debug : afficher l'utilisateur utilisé (sans le mot de passe)
@@ -95,7 +82,7 @@ fs.createReadStream(csvPath)
   .on("end", async () => {
     try {
       console.log(
-        `Tentative de connexion à PostgreSQL (${process.env.POSTGRES_DB})...`
+        `Tentative de connexion à PostgreSQL (${config.POSTGRES_DB})...`
       );
       await client.connect();
       console.log("Connexion à PostgreSQL réussie");

@@ -10,6 +10,7 @@ import {
   testProRequest,
 } from "../controllers/auth.js";
 import { verifyToken, isAdmin } from "../middleware/auth.js";
+import { config } from "../config/env.js";
 
 export default async function authRoutes(fastify, options) {
   fastify.post("/api/auth/register", register);
@@ -23,16 +24,15 @@ export default async function authRoutes(fastify, options) {
   fastify.post("/api/auth/logout", { preHandler: verifyToken }, logout);
 
   fastify.get("/api/auth/google/config", async (request, reply) => {
-    
-    const config = {
+    const googleConfig = {
       success: true,
       data: {
-        clientId: process.env.GOOGLE_CLIENT_ID,
-        redirectUri: process.env.GOOGLE_REDIRECT_URI,
+        clientId: config.GOOGLE_CLIENT_ID,
+        redirectUri: config.GOOGLE_REDIRECT_URI,
       },
     };
 
-    reply.send(config);
+    reply.send(googleConfig);
   });
 
   fastify.put("/api/auth/profile", { preHandler: verifyToken }, updateProfile);

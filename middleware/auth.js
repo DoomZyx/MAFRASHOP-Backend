@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { config } from "../config/env.js";
 import User from "../models/user.js";
 import { verifySiretAndCompanyName } from "../API/insee.js";
 
@@ -15,11 +16,11 @@ export const verifyToken = async (request, reply) => {
 
     const token = authHeader.split(" ")[1];
     
-    if (!process.env.JWT_SECRET) {
+    if (!config.JWT_SECRET) {
       throw new Error("JWT_SECRET non configuré");
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, config.JWT_SECRET);
     const user = await User.findById(decoded.userId);
     
     if (!user) {
@@ -55,11 +56,11 @@ export const optionalAuth = async (request, reply) => {
 
     const token = authHeader.split(" ")[1];
     
-    if (!process.env.JWT_SECRET) {
+    if (!config.JWT_SECRET) {
       return;
     }
     
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, config.JWT_SECRET);
     const user = await User.findById(decoded.userId);
     
     if (user) {

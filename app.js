@@ -1,5 +1,4 @@
-import dotenv from "dotenv";
-dotenv.config();
+import { config } from "./config/env.js";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import pg from "pg";
@@ -15,12 +14,13 @@ export { sendToUser };
 const { Pool } = pg;
 
 const pool = new Pool({
-  host: process.env.POSTGRES_HOST || "localhost",
-  port: parseInt(process.env.POSTGRES_PORT || "5432", 10),
-  database: process.env.POSTGRES_DB,
-  user: process.env.POSTGRES_USER || "postgres",
-  password: process.env.POSTGRES_PASSWORD,
+  host: config.POSTGRES_HOST,
+  port: config.POSTGRES_PORT,
+  database: config.POSTGRES_DB,
+  user: config.POSTGRES_USER,
+  password: config.POSTGRES_PASSWORD,
 });
+
 
 async function connectDB() {
   try {
@@ -78,7 +78,7 @@ fastify.addHook("onSend", async (request, reply, payload) => {
 // Hook pour capturer les erreurs
 fastify.setErrorHandler((error, request, reply) => {
   console.error("ERREUR:", error.message || "Erreur serveur");
-  if (process.env.NODE_ENV === "development") {
+  if (config.NODE_ENV === "development") {
     console.error("Stack:", error.stack);
   }
   reply.type("application/json");

@@ -1,5 +1,4 @@
-import dotenv from "dotenv";
-dotenv.config();
+import { config } from "../config/env.js";
 
 const INSEE_API_BASE_URL = "https://api.insee.fr/entreprises/sirene/V3.11";
 const INSEE_TOKEN_URL = "https://api.insee.fr/token";
@@ -56,8 +55,8 @@ const checkRateLimit = () => {
  */
 const generateAccessToken = async () => {
   try {
-    const consumerKey = process.env.INSEE_CONSUMER_KEY;
-    const consumerSecret = process.env.INSEE_CONSUMER_SECRET;
+    const consumerKey = config.INSEE_CONSUMER_KEY;
+    const consumerSecret = config.INSEE_CONSUMER_SECRET;
 
     if (!consumerKey || !consumerSecret) {
       throw new Error(

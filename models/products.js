@@ -1,49 +1,56 @@
-import dotenv from "dotenv";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
-import fs from "fs";
+import { config } from "../config/env.js";
 import pg from "pg";
-
-// Obtenir le répertoire du fichier actuel
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Charger le .env depuis le dossier backend (parent)
-const envPath = join(__dirname, "..", ".env.dev");
-const envPathFallback = join(__dirname, "..", ".env");
-
-if (fs.existsSync(envPath)) {
-  dotenv.config({ path: envPath });
-} else if (fs.existsSync(envPathFallback)) {
-  dotenv.config({ path: envPathFallback });
-} else {
-  dotenv.config();
-}
 
 const { Pool } = pg;
 
 // Validation des variables d'environnement
-if (!process.env.POSTGRES_PASSWORD) {
+if (!config.POSTGRES_PASSWORD) {
   console.error("ERREUR : POSTGRES_PASSWORD manquant dans .env");
   throw new Error("POSTGRES_PASSWORD manquant dans les variables d'environnement");
 }
 
-if (!process.env.POSTGRES_DB) {
+if (!config.POSTGRES_DB) {
   console.error("ERREUR : POSTGRES_DB manquant dans .env");
   throw new Error("POSTGRES_DB manquant dans les variables d'environnement");
 }
 
 const pool = new Pool({
-  host: process.env.POSTGRES_HOST || "localhost",
-  port: parseInt(process.env.POSTGRES_PORT || "5432", 10),
-  database: process.env.POSTGRES_DB,
-  user: process.env.POSTGRES_USER || "postgres",
-  password: process.env.POSTGRES_PASSWORD, // Maintenant garanti d'être une string
+  host: config.POSTGRES_HOST || "localhost",
+  port: config.POSTGRES_PORT,
+  database: config.POSTGRES_DB,
+  user: config.POSTGRES_USER || "postgres",
+  password: config.POSTGRES_PASSWORD,
 });
+
+
+
+// Fonction pour encoder l'URL de l'image
+const encodeImageUrl = (url) => {
+  if (!url) return null;
+  
+  try {
+    // Utiliser URL pour parser et reconstruire l'URL correctement
+    const urlObj = new URL(url);
+    // Encoder le pathname (qui contient le nom du fichier)
+    const pathParts = urlObj.pathname.split('/');
+    const encodedPath = pathParts.map(part => 
+      part ? encodeURIComponent(part) : ''
+    ).join('/');
+    urlObj.pathname = encodedPath;
+    return urlObj.toString();
+  } catch (e) {
+    // Si ce n'est pas une URL valide, utiliser encodeURI
+    return encodeURI(url);
+  }
+};
 
 // Fonction pour mapper les données PostgreSQL vers le format frontend
 const mapProduct = (row) => {
   if (!row) return null;
+
+  if (row.url_image && row.url_image.includes('&')) {
+    console.log(`URL avec & détectée pour produit ${row.id}: ${row.url_image}`);
+  }
   
   return {
     id: row.id.toString(),
@@ -51,7 +58,7 @@ const mapProduct = (row) => {
     subcategory: row.subcategory,
     nom: row.nom,
     ref: row.ref,
-    url_image: row.url_image,
+    url_image: encodeImageUrl(row.url_image),
     description: row.description,
     format: row.format,
     net_socofra: row.net_socofra ? parseFloat(row.net_socofra) : null,

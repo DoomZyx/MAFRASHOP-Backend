@@ -1,30 +1,14 @@
 import pg from "pg";
-import dotenv from "dotenv";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
-import fs from "fs";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const envPath = join(__dirname, "..", ".env.dev");
-const envPathFallback = join(__dirname, "..", ".env");
-
-if (fs.existsSync(envPath)) {
-  dotenv.config({ path: envPath });
-} else if (fs.existsSync(envPathFallback)) {
-  dotenv.config({ path: envPathFallback });
-} else {
-  dotenv.config();
-}
+import { config } from "../config/env.js";
 
 const { Pool } = pg;
 
 const pool = new Pool({
-  host: process.env.POSTGRES_HOST || "localhost",
-  port: parseInt(process.env.POSTGRES_PORT || "5432", 10),
-  database: process.env.POSTGRES_DB,
-  user: process.env.POSTGRES_USER || "postgres",
-  password: process.env.POSTGRES_PASSWORD,
+  host: config.POSTGRES_HOST || "localhost",
+  port: config.POSTGRES_PORT,
+  database: config.POSTGRES_DB,
+  user: config.POSTGRES_USER || "postgres",
+  password: config.POSTGRES_PASSWORD,
 });
 
 // Mapper les données des favoris avec les produits (JOIN)
