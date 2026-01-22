@@ -92,7 +92,7 @@ await fastify.register(cors, {
       cb(new Error("Not allowed by CORS"), false);
     }
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
   credentials: true,
 });

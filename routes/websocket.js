@@ -81,7 +81,7 @@ export default async function websocketRoutes(fastify, options) {
         }
         connections.get(userId.toString()).add(socket);
 
-        console.log(`✅ WebSocket connecté pour userId: ${userId}`);
+        console.log(`WebSocket connecté pour userId: ${userId}`);
 
         // Envoyer un message de bienvenue (attendre que la socket soit ouverte)
         if (socket.readyState === 1) {
@@ -111,12 +111,12 @@ export default async function websocketRoutes(fastify, options) {
               connections.delete(userId.toString());
             }
           }
-          console.log(`🔌 WebSocket déconnecté pour userId: ${userId}`);
+          console.log(`WebSocket déconnecté pour userId: ${userId}`);
         });
 
         // Gérer les erreurs
         socket.on("error", (error) => {
-          console.error(`❌ Erreur WebSocket pour userId ${userId}:`, error);
+          console.error(`Erreur WebSocket pour userId ${userId}:`, error);
         });
       } catch (error) {
         console.error("Erreur de vérification du token WebSocket:", error);

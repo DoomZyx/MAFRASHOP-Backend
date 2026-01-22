@@ -1,8 +1,19 @@
-import { getAllProducts, getProductById } from "../controllers/products.js";
+import {
+  getAllProducts,
+  getProductById,
+  getBestsellers,
+  getPromotions,
+  updateBestsellerStatus,
+  updatePromotionStatus,
+} from "../controllers/products.js";
 
 export default async function productsRoutes(fastify) {
   fastify.get("/products", getAllProducts);
   fastify.get("/products/:id", getProductById);
+  fastify.get("/products/bestsellers/all", getBestsellers);
+  fastify.get("/products/promotions/all", getPromotions);
+  fastify.patch("/products/:id/bestseller", updateBestsellerStatus);
+  fastify.patch("/products/:id/promotion", updatePromotionStatus);
   // fastify.post("/products", createProduct);
   // fastify.put("/products/:id", updateProduct);
   // fastify.delete("/products/:id", deleteProduct);

@@ -74,6 +74,9 @@ const mapProduct = (row) => {
     net_socofra: row.net_socofra ? parseFloat(row.net_socofra) : null,
     public_ht: row.public_ht ? parseFloat(row.public_ht) : null,
     garage: row.garage ? parseFloat(row.garage) : null,
+    is_bestseller: row.is_bestseller || false,
+    is_promotion: row.is_promotion || false,
+    promotion_percentage: row.promotion_percentage ? parseInt(row.promotion_percentage) : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -99,6 +102,36 @@ class Product {
     const result = await pool.query(
       "SELECT * FROM products WHERE ref = $1",
       [ref]
+    );
+    return mapProduct(result.rows[0]);
+  }
+
+  static async findBestsellers() {
+    const result = await pool.query(
+      "SELECT * FROM products WHERE is_bestseller = TRUE ORDER BY id"
+    );
+    return result.rows.map(mapProduct);
+  }
+
+  static async findPromotions() {
+    const result = await pool.query(
+      "SELECT * FROM products WHERE is_promotion = TRUE ORDER BY id"
+    );
+    return result.rows.map(mapProduct);
+  }
+
+  static async updateBestsellerStatus(id, isBestseller) {
+    const result = await pool.query(
+      "UPDATE products SET is_bestseller = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *",
+      [isBestseller, id]
+    );
+    return mapProduct(result.rows[0]);
+  }
+
+  static async updatePromotionStatus(id, isPromotion, promotionPercentage = null) {
+    const result = await pool.query(
+      "UPDATE products SET is_promotion = $1, promotion_percentage = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *",
+      [isPromotion, promotionPercentage, id]
     );
     return mapProduct(result.rows[0]);
   }
