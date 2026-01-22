@@ -1,4 +1,4 @@
-import { config } from "../config/env.js";
+import "../loadEnv.js";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import fs from "fs";
@@ -11,38 +11,49 @@ const __dirname = dirname(__filename);
 
 const { Client } = pg;
 
+// Parser DATABASE_URL si elle existe, sinon utiliser les variables individuelles
+const parseDatabaseUrl = (url) => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return {
+      host: parsed.hostname,
+      port: parseInt(parsed.port || "5432", 10),
+      database: parsed.pathname.slice(1),
+      user: parsed.username,
+      password: parsed.password,
+    };
+  } catch (error) {
+    return null;
+  }
+};
+
+const dbConfig = process.env.DATABASE_URL 
+  ? parseDatabaseUrl(process.env.DATABASE_URL)
+  : {
+      host: process.env.POSTGRES_HOST || "localhost",
+      port: parseInt(process.env.POSTGRES_PORT || "5432", 10),
+      database: process.env.POSTGRES_DB,
+      user: process.env.POSTGRES_USER || "postgres",
+      password: process.env.POSTGRES_PASSWORD,
+    };
+
 // Validation des variables d'environnement
-if (!config.POSTGRES_PASSWORD) {
+if (!dbConfig || !dbConfig.password) {
   console.error("ERREUR : POSTGRES_PASSWORD manquant dans .env");
   console.error(
-    "Vérifie que ton fichier .env contient : POSTGRES_PASSWORD=ton_mot_de_passe"
+    "Vérifie que ton fichier .env contient : POSTGRES_PASSWORD=ton_mot_de_passe ou DATABASE_URL"
   );
   process.exit(1);
 }
 
-if (!config.POSTGRES_DB) {
+if (!dbConfig.database) {
   console.error("ERREUR : POSTGRES_DB manquant dans .env");
   process.exit(1);
 }
 
-// Récupérer l'utilisateur (forcer "postgres" si non défini)
-const postgresUser = config.POSTGRES_USER || "postgres";
+const client = new Client(dbConfig);
 
-const client = new Client({
-  host: config.POSTGRES_HOST || "localhost",
-  port: config.POSTGRES_PORT,
-  database: config.POSTGRES_DB,
-  user: postgresUser,
-  password: config.POSTGRES_PASSWORD,
-});
-
-// Debug : afficher l'utilisateur utilisé (sans le mot de passe)
-console.log(`Configuration PostgreSQL:`);
-console.log(`  - Host: ${client.host}`);
-console.log(`  - Port: ${client.port}`);
-console.log(`  - Database: ${client.database}`);
-console.log(`  - User: ${client.user}`);
-console.log(`  - Password: ${client.password ? "***" : "NON DÉFINI"}`);
 
 const parseNumber = (value) => {
   if (!value || value.trim() === "") return null;
@@ -82,7 +93,7 @@ fs.createReadStream(csvPath)
   .on("end", async () => {
     try {
       console.log(
-        `Tentative de connexion à PostgreSQL (${config.POSTGRES_DB})...`
+        `Tentative de connexion à PostgreSQL (${dbConfig.database})...`
       );
       await client.connect();
       console.log("Connexion à PostgreSQL réussie");

@@ -1,5 +1,4 @@
 import jwt from "jsonwebtoken";
-import { config } from "../config/env.js";
 
 // Store pour les connexions WebSocket par userId
 const connections = new Map();
@@ -60,12 +59,12 @@ export default async function websocketRoutes(fastify, options) {
       let userId = null;
 
       try {
-        if (!config.JWT_SECRET) {
+        if (!process.env.JWT_SECRET) {
           socket.close(1011, "Configuration serveur invalide");
           return;
         }
 
-        const decoded = jwt.verify(token, config.JWT_SECRET);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         userId =
           typeof decoded === "object" && decoded !== null
             ? decoded.userId

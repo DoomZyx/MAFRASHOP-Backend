@@ -10,7 +10,6 @@ import {
   testProRequest,
 } from "../controllers/auth.js";
 import { verifyToken, isAdmin } from "../middleware/auth.js";
-import { config } from "../config/env.js";
 
 export default async function authRoutes(fastify, options) {
   fastify.post("/api/auth/register", register);
@@ -27,8 +26,8 @@ export default async function authRoutes(fastify, options) {
     const googleConfig = {
       success: true,
       data: {
-        clientId: config.GOOGLE_CLIENT_ID,
-        redirectUri: config.GOOGLE_REDIRECT_URI,
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        redirectUri: process.env.GOOGLE_REDIRECT_URI,
       },
     };
 
