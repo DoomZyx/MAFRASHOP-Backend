@@ -8,6 +8,8 @@ import {
   requestPro,
   validateProManually,
   testProRequest,
+  adminLogin,
+  adminMe,
 } from "../controllers/auth.js";
 import { verifyToken, isAdmin } from "../middleware/auth.js";
 
@@ -55,5 +57,10 @@ export default async function authRoutes(fastify, options) {
     { preHandler: [verifyToken, isAdmin] },
     validateProManually
   );
+
+  // Admin routes
+  fastify.post("/api/auth/admin/login", adminLogin);
+  fastify.get("/api/auth/admin/me", { preHandler: verifyToken }, adminMe);
+  fastify.get("/api/auth/admin/check", { preHandler: verifyToken }, adminMe);
 }
 

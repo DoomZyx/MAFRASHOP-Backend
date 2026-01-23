@@ -231,6 +231,99 @@ export const googleCallback = async (request, reply) => {
   }
 };
 
+// Admin login
+export const adminLogin = async (request, reply) => {
+  try {
+    const { email, password } = request.body;
+
+    if (!email || !password) {
+      return reply.code(400).send({
+        success: false,
+        message: "Email et mot de passe requis",
+      });
+    }
+
+    const user = await User.findByEmail(email);
+    if (!user) {
+      return reply.code(401).send({
+        success: false,
+        message: "Email ou mot de passe incorrect",
+      });
+    }
+
+    if (user.role !== "admin") {
+      return reply.code(403).send({
+        success: false,
+        message: "Accès réservé aux administrateurs",
+      });
+    }
+
+    if (user.authProvider !== "local") {
+      return reply.code(400).send({
+        success: false,
+        message: `Ce compte utilise l'authentification ${user.authProvider}`,
+      });
+    }
+
+    const isPasswordValid = await User.comparePassword(user.id, password);
+    if (!isPasswordValid) {
+      return reply.code(401).send({
+        success: false,
+        message: "Email ou mot de passe incorrect",
+      });
+    }
+
+    const token = generateToken(user.id);
+
+    reply.type("application/json");
+    reply.send({
+      success: true,
+      message: "Connexion admin réussie",
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        isAdmin: true,
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la connexion admin:", error);
+    reply.type("application/json");
+    reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la connexion",
+    });
+  }
+};
+
+// Admin me
+export const adminMe = async (request, reply) => {
+  try {
+    const user = request.user;
+    
+    if (user.role !== "admin") {
+      return reply.code(403).send({
+        success: false,
+        message: "Accès réservé aux administrateurs",
+      });
+    }
+
+    reply.type("application/json");
+    reply.send({
+      id: user.id,
+      email: user.email,
+      isAdmin: true,
+    });
+  } catch (error) {
+    console.error("Erreur lors de la récupération admin:", error);
+    reply.type("application/json");
+    reply.code(500).send({
+      success: false,
+      message: "Erreur serveur",
+    });
+  }
+};
+
 export const getMe = async (request, reply) => {
   try {
     const user = await User.findById(request.user.id);

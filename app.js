@@ -7,6 +7,8 @@ import authRoutes from "./routes/auth.js";
 import cartRoutes from "./routes/cart.js";
 import favoritesRoutes from "./routes/favorites.js";
 import websocketRoutes from "./routes/websocket.js";
+import paymentRoutes from "./routes/payment.js";
+import ordersRoutes from "./routes/orders.js";
 import { sendToUser } from "./routes/websocket.js";
 
 export { sendToUser };
@@ -124,6 +126,8 @@ fastify.register(authRoutes);
 fastify.register(cartRoutes);
 fastify.register(favoritesRoutes);
 fastify.register(websocketRoutes);
+fastify.register(paymentRoutes);
+fastify.register(ordersRoutes);
 
 // Initialiser la connexion à la base de données
 await connectDB();
