@@ -296,6 +296,123 @@ export const adminLogin = async (request, reply) => {
   }
 };
 
+// Admin Google callback
+export const adminGoogleCallback = async (request, reply) => {
+  try {
+    const { code } = request.body;
+
+    if (!code) {
+      return reply.code(400).send({
+        success: false,
+        message: "Code d'autorisation manquant",
+      });
+    }
+
+    const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI } =
+      process.env;
+
+    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_REDIRECT_URI) {
+      throw new Error("Configuration Google OAuth manquante");
+    }
+
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        code,
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: GOOGLE_REDIRECT_URI,
+        grant_type: "authorization_code",
+      }),
+    });
+
+    const tokenData = await tokenResponse.json();
+
+    if (!tokenResponse.ok) {
+      console.error("Erreur Google OAuth:", tokenData);
+      return reply.code(400).send({
+        success: false,
+        message: "Échec de l'authentification Google",
+      });
+    }
+
+    const userInfoResponse = await fetch(
+      "https://www.googleapis.com/oauth2/v2/userinfo",
+      {
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+        },
+      }
+    );
+
+    const googleUser = await userInfoResponse.json();
+
+    if (!userInfoResponse.ok) {
+      return reply.code(400).send({
+        success: false,
+        message: "Impossible de récupérer les informations utilisateur",
+      });
+    }
+
+    let user = await User.findByGoogleId(googleUser.id);
+
+    if (!user) {
+      user = await User.findByEmail(googleUser.email);
+    }
+
+    if (!user) {
+      return reply.code(403).send({
+        success: false,
+        message: "Compte non trouvé. Veuillez contacter un administrateur.",
+      });
+    }
+
+    if (user.role !== "admin") {
+      return reply.code(403).send({
+        success: false,
+        message: "Accès réservé aux administrateurs",
+      });
+    }
+
+    if (user.authProvider !== "google" && !user.googleId) {
+      await User.update(user.id, {
+        googleId: googleUser.id,
+        authProvider: "google",
+      });
+      user = await User.findById(user.id);
+    }
+
+    if (googleUser.picture && user.avatar !== googleUser.picture) {
+      await User.update(user.id, { avatar: googleUser.picture });
+      user = await User.findById(user.id);
+    }
+
+    const token = generateToken(user.id);
+
+    reply.type("application/json");
+    reply.send({
+      success: true,
+      message: "Authentification admin Google réussie",
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        isAdmin: true,
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de l'authentification admin Google:", error);
+    reply.type("application/json");
+    reply.code(500).send({
+      success: false,
+      message: "Erreur lors de l'authentification Google",
+    });
+  }
+};
+
 // Admin me
 export const adminMe = async (request, reply) => {
   try {
@@ -582,6 +699,134 @@ export const updateProfile = async (request, reply) => {
     reply.code(500).send({
       success: false,
       message: "Erreur lors de la MAJ du profile",
+    });
+  }
+};
+
+// Admin: Lister tous les utilisateurs
+export const getAllUsers = async (request, reply) => {
+  try {
+    const users = await User.findAll();
+    
+    reply.type("application/json");
+    reply.send({
+      success: true,
+      data: {
+        users: users.map((user) => User.toJSON(user)),
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la récupération des utilisateurs:", error);
+    reply.type("application/json");
+    reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la récupération des utilisateurs",
+    });
+  }
+};
+
+// Admin: Modifier le rôle d'un utilisateur
+export const updateUserRole = async (request, reply) => {
+  try {
+    const { userId } = request.params;
+    const { role } = request.body;
+
+    if (!role || !["user", "admin"].includes(role)) {
+      return reply.code(400).send({
+        success: false,
+        message: "Le rôle doit être 'user' ou 'admin'",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return reply.code(404).send({
+        success: false,
+        message: "Utilisateur introuvable",
+      });
+    }
+
+    // Empêcher de retirer le rôle admin à soi-même
+    if (request.user.id === userId && role === "user") {
+      return reply.code(400).send({
+        success: false,
+        message: "Vous ne pouvez pas retirer votre propre rôle d'administrateur",
+      });
+    }
+
+    const updatedUser = await User.update(userId, { role });
+
+    reply.type("application/json");
+    reply.send({
+      success: true,
+      message: `Rôle mis à jour avec succès`,
+      data: {
+        user: User.toJSON(updatedUser),
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la mise à jour du rôle:", error);
+    reply.type("application/json");
+    reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la mise à jour du rôle",
+    });
+  }
+};
+
+// Admin: Créer un utilisateur admin
+export const createAdminUser = async (request, reply) => {
+  try {
+    const { email, password, firstName, lastName, role } = request.body;
+
+    if (!email || !password || !firstName || !lastName) {
+      return reply.code(400).send({
+        success: false,
+        message: "Email, mot de passe, prénom et nom sont requis",
+      });
+    }
+
+    if (password.length < 6) {
+      return reply.code(400).send({
+        success: false,
+        message: "Le mot de passe doit contenir au moins 6 caractères",
+      });
+    }
+
+    const existingUser = await User.findByEmail(email);
+    if (existingUser) {
+      return reply.code(400).send({
+        success: false,
+        message: "Cet email est déjà utilisé",
+      });
+    }
+
+    const userRole = role === "admin" ? "admin" : "user";
+
+    const user = await User.create({
+      email,
+      password,
+      firstName,
+      lastName,
+      authProvider: "local",
+      isVerified: true,
+      role: userRole,
+    });
+
+    reply.type("application/json");
+    reply.send({
+      success: true,
+      message: `Utilisateur ${userRole === "admin" ? "administrateur" : ""} créé avec succès`,
+      data: {
+        user: User.toJSON(user),
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la création de l'utilisateur:", error);
+    reply.type("application/json");
+    reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la création de l'utilisateur",
     });
   }
 };

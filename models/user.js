@@ -214,6 +214,13 @@ class User {
     return await bcrypt.compare(candidatePassword, result.rows[0].password);
   }
 
+  static async findAll() {
+    const result = await pool.query(
+      "SELECT * FROM users ORDER BY created_at DESC"
+    );
+    return result.rows.map(mapUser);
+  }
+
   // Méthode pour toJSON (compatibilité avec l'ancien code)
   static toJSON(user) {
     if (!user) return null;

@@ -9,7 +9,11 @@ import {
   validateProManually,
   testProRequest,
   adminLogin,
+  adminGoogleCallback,
   adminMe,
+  getAllUsers,
+  updateUserRole,
+  createAdminUser,
 } from "../controllers/auth.js";
 import { verifyToken, isAdmin } from "../middleware/auth.js";
 
@@ -60,7 +64,25 @@ export default async function authRoutes(fastify, options) {
 
   // Admin routes
   fastify.post("/api/auth/admin/login", adminLogin);
+  fastify.post("/api/auth/admin/google/callback", adminGoogleCallback);
   fastify.get("/api/auth/admin/me", { preHandler: verifyToken }, adminMe);
   fastify.get("/api/auth/admin/check", { preHandler: verifyToken }, adminMe);
+  
+  // Admin: Gestion des utilisateurs
+  fastify.get(
+    "/api/admin/users",
+    { preHandler: [verifyToken, isAdmin] },
+    getAllUsers
+  );
+  fastify.post(
+    "/api/admin/users",
+    { preHandler: [verifyToken, isAdmin] },
+    createAdminUser
+  );
+  fastify.patch(
+    "/api/admin/users/:userId/role",
+    { preHandler: [verifyToken, isAdmin] },
+    updateUserRole
+  );
 }
 
