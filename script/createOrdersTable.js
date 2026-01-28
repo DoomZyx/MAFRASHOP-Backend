@@ -37,7 +37,7 @@ const dbConfig = process.env.DATABASE_URL
     };
 
 if (!dbConfig || !dbConfig.database) {
-  console.error("❌ Configuration de base de données manquante");
+  console.error("Configuration de base de données manquante");
   console.error("Vérifiez vos variables d'environnement DATABASE_URL ou POSTGRES_*");
   process.exit(1);
 }
@@ -53,11 +53,11 @@ async function createOrdersTable() {
 
     await pool.query(sql);
 
-    console.log("✅ Table 'orders' créée avec succès");
-    console.log("✅ Table 'order_items' créée avec succès");
-    console.log("✅ Index créés avec succès");
+    console.log("Table 'orders' créée avec succès");
+    console.log("Table 'order_items' créée avec succès");
+    console.log("Index créés avec succès");
   } catch (error) {
-    console.error("❌ Erreur lors de la création des tables:", error);
+    console.error("Erreur lors de la création des tables:", error);
     process.exit(1);
   } finally {
     await pool.end();

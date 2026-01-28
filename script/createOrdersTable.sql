@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS orders (
   stripe_payment_intent_id VARCHAR(255),
   stripe_session_id VARCHAR(255),
   status VARCHAR(50) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'failed', 'cancelled', 'refunded')),
+  expected_amount BIGINT,
   total_amount DECIMAL(10, 2) NOT NULL,
   shipping_address JSONB,
   billing_address JSONB,

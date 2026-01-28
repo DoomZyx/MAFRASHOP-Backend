@@ -1,7 +1,7 @@
 import Stripe from "stripe";
 import Order from "../models/orders.js";
 import Cart from "../models/cart.js";
-import Product from "../models/products.js";
+import { calculateCartTotal } from "../utils/priceCalculation.js";
 
 if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error("STRIPE_SECRET_KEY n'est pas défini dans les variables d'environnement");
@@ -9,11 +9,21 @@ if (!process.env.STRIPE_SECRET_KEY) {
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// Créer une session de paiement Stripe
+/**
+ * Crée une session de paiement Stripe Checkout
+ * 
+ * Flow sécurisé :
+ * 1. Calcul des prix côté backend (SEULE source de vérité)
+ * 2. Création de l'Order en base AVANT redirection Stripe
+ * 3. Stockage du snapshot des items et du montant attendu
+ * 4. Stripe gère la TVA automatiquement (automatic_tax)
+ * 5. Le webhook vérifie la cohérence des montants
+ */
 export const createCheckoutSession = async (request, reply) => {
   try {
     const userId = request.user.id;
     const { shippingAddress } = request.body;
+    const isPro = request.user.isPro || false;
 
     // Récupérer le panier
     const cartItems = await Cart.findByUserId(userId);
@@ -25,100 +35,96 @@ export const createCheckoutSession = async (request, reply) => {
       });
     }
 
-    // Calculer le total et préparer les line items pour Stripe
-    let totalAmount = 0;
-    const lineItems = [];
 
-    const isPro = request.user.isPro || false;
+    // Calculer les prix côté backend (SEULE source de vérité)
+    // Pour les particuliers : calcule le TTC (HT * 1.2) côté backend
+    // Pour les pros : reste en HT
+    const cartCalculation = await calculateCartTotal(cartItems, isPro);
 
-    for (const item of cartItems) {
-      if (!item || !item.productId) continue;
-      const product = item.productId;
-      
-      // Déterminer le prix selon le type d'utilisateur
-      // Pour les pros : utiliser garage, sinon public_ht
-      let unitPrice = isPro 
-        ? (product.garage || product.public_ht || 0)
-        : (product.public_ht || product.net_socofra || 0);
-      
-      // Appliquer la promotion si elle existe
-      const fullProduct = await Product.findById(product.id);
-      if (fullProduct?.is_promotion && fullProduct?.promotion_percentage) {
-        const discount = (unitPrice * fullProduct.promotion_percentage) / 100;
-        unitPrice = unitPrice - discount;
-      }
-
-      // Ajouter la TVA (20%) uniquement pour les particuliers
-      if (!isPro) {
-        unitPrice = unitPrice * 1.2; // TTC
-      }
-
-      const itemTotal = unitPrice * item.quantity;
-      totalAmount += itemTotal;
-
-      lineItems.push({
-        price_data: {
-          currency: "eur",
-          product_data: {
-            name: product.nom,
-            description: product.description || `${product.ref} - ${product.category}`,
-            images: product.url_image ? [product.url_image] : [],
-          },
-          unit_amount: Math.round(unitPrice * 100), // Stripe utilise les centimes
-        },
-        quantity: item.quantity,
+    if (cartCalculation.items.length === 0) {
+      return reply.code(400).send({
+        success: false,
+        message: "Aucun produit valide dans le panier",
       });
     }
 
-    // Créer la session Stripe Checkout
+    // Préparer les line items pour Stripe
+    // IMPORTANT : 
+    // - Pour les particuliers : on envoie le prix TTC (calculé côté backend) avec tax_behavior: "inclusive"
+    // - Pour les pros : on envoie le prix HT avec tax_behavior: "exclusive"
+    // Stripe vérifiera la TVA automatiquement avec automatic_tax
+    const lineItems = cartCalculation.items.map((item) => {
+      // Trouver l'item du panier correspondant
+      const cartItem = cartItems.find((ci) => ci && ci.productId && ci.productId.id === item.productId);
+      const product = cartItem?.productId;
+
+      return {
+        price_data: {
+          currency: "eur",
+          product_data: {
+            name: product?.nom || "Produit",
+            description: product?.description || product?.ref || "",
+            images: product?.url_image ? [product.url_image] : [],
+          },
+          // Prix unitaire en centimes (TTC pour particuliers, HT pour pros)
+          unit_amount: item.unitPriceInCents,
+          // Pour les particuliers : prix inclut déjà la TVA (calculée côté backend)
+          // Pour les pros : prix HT, Stripe ne calculera pas de TVA
+          tax_behavior: isPro ? "exclusive" : "inclusive",
+        },
+        quantity: item.quantity,
+      };
+    });
+
+    // Créer la commande EN BASE AVANT la redirection Stripe
+    // On stocke le snapshot des items et le montant attendu en centimes
+    // Pour les particuliers : expectedAmount est en TTC (calculé côté backend)
+    // Pour les pros : expectedAmount est en HT
+    const order = await Order.create({
+      userId,
+      stripeSessionId: null,
+      status: "pending",
+      totalAmount: isPro ? cartCalculation.totalHT : cartCalculation.totalTTC, // Montant en euros (HT pour pros, TTC pour particuliers)
+      expectedAmount: cartCalculation.totalInCents, // Montant attendu en centimes (HT pour pros, TTC pour particuliers)
+      isPro,
+      shippingAddress: shippingAddress || null,
+      items: cartCalculation.items.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPriceHT, // Prix unitaire HT en euros (toujours stocké en HT)
+        totalPrice: item.totalPriceHT, // Total HT en euros (toujours stocké en HT)
+      })),
+    });
+
+    if (!order || !order.id) {
+      throw new Error("Erreur lors de la création de la commande");
+    }
+
+    // Créer la session Stripe Checkout avec automatic_tax
+    // Stripe vérifiera la TVA automatiquement même si on envoie déjà le TTC pour les particuliers
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: lineItems,
       mode: "payment",
+      customer_creation: "always", // Toujours créer un customer Stripe
+      automatic_tax: {
+        enabled: true, // Stripe vérifie automatiquement la TVA française (même si prix déjà en TTC)
+      },
       success_url: `${process.env.FRONTEND_URL || "http://localhost:5173"}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONTEND_URL || "http://localhost:5173"}/checkout/cancel`,
       customer_email: request.user.email,
       metadata: {
         userId: userId.toString(),
+        orderId: order.id.toString(),
       },
       shipping_address_collection: {
         allowed_countries: ["FR", "BE", "CH", "LU"],
       },
     });
+    
 
-    // Créer une commande en statut "pending"
-    const order = await Order.create({
-      userId,
-      stripeSessionId: session.id,
-      status: "pending",
-      totalAmount,
-      isPro: isPro,
-      shippingAddress: shippingAddress || null,
-      items: cartItems
-        .filter((item) => item && item.productId)
-        .map((item) => {
-          if (!item || !item.productId) return null;
-          const product = item.productId;
-          // Utiliser le même calcul de prix que pour Stripe
-          let unitPrice = isPro 
-            ? (product.garage || product.public_ht || 0)
-            : (product.public_ht || product.net_socofra || 0);
-          
-          // Appliquer la promotion si elle existe
-          // Note: on devrait récupérer le produit complet, mais pour simplifier on utilise le prix déjà calculé
-          if (!isPro) {
-            unitPrice = unitPrice * 1.2; // TTC
-          }
-          
-          return {
-            productId: product.id,
-            quantity: item.quantity,
-            unitPrice,
-            totalPrice: unitPrice * item.quantity,
-          };
-        })
-        .filter((item) => item !== null),
-    });
+    // Mettre à jour l'Order avec le stripeSessionId
+    await Order.updateStripeSessionId(order.id, session.id);
 
     reply.type("application/json");
     return reply.send({
@@ -126,7 +132,7 @@ export const createCheckoutSession = async (request, reply) => {
       data: {
         sessionId: session.id,
         url: session.url,
-        orderId: order?.id || null,
+        orderId: order.id,
       },
     });
   } catch (error) {
@@ -140,7 +146,16 @@ export const createCheckoutSession = async (request, reply) => {
   }
 };
 
-// Webhook Stripe pour confirmer les paiements
+/**
+ * Webhook Stripe pour confirmer les paiements
+ * 
+ * Sécurité :
+ * - Vérification de la signature Stripe
+ * - Gestion uniquement de checkout.session.completed et checkout.session.async_payment_failed
+ * - Comparaison stricte des montants (session.amount_total vs order.expectedAmount)
+ * - Passage à "paid" uniquement si les montants correspondent
+ * - Vidage du panier uniquement après paiement confirmé
+ */
 export const stripeWebhook = async (request, reply) => {
   const sig = request.headers["stripe-signature"];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -155,7 +170,12 @@ export const stripeWebhook = async (request, reply) => {
   try {
     // Utiliser le body brut (requis pour vérifier la signature Stripe)
     if (!request.rawBody) {
-      throw new Error("Body brut non disponible");
+      // Fallback : essayer de récupérer le body depuis request.body si c'est une string
+      if (typeof request.body === "string") {
+        request.rawBody = request.body;
+      } else {
+        throw new Error("Body brut non disponible. Vérifiez la configuration de la route webhook.");
+      }
     }
     event = stripe.webhooks.constructEvent(
       request.rawBody,
@@ -168,33 +188,82 @@ export const stripeWebhook = async (request, reply) => {
   }
 
   try {
+    // Gérer uniquement les événements de checkout session
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 
       // Trouver la commande par session ID
       const order = await Order.findByStripeSessionId(session.id);
 
-      if (order) {
-        // Mettre à jour le statut de la commande
+      if (!order) {
+        console.error(`Commande non trouvée pour la session ${session.id}`);
+        return reply.code(404).send({ error: "Commande non trouvée" });
+      }
+
+      // Vérifier que la commande est en statut pending
+      if (order.status !== "pending") {
+        console.warn(`Commande ${order.id} déjà traitée (statut: ${order.status})`);
+        return reply.send({ received: true });
+      }
+
+      // Vérifier le paiement
+      if (session.payment_status === "paid") {
+        // Comparer le montant Stripe avec le montant attendu
+        const stripeAmountTotal = session.amount_total; // Montant total en centimes depuis Stripe
+        const expectedAmount = order.expectedAmount; // Montant attendu en centimes
+
+        // Pour les particuliers : expectedAmount est en TTC (calculé côté backend)
+        // Pour les pros : expectedAmount est en HT
+        // On compare directement avec le montant total de Stripe
+        // (qui sera TTC pour particuliers, HT pour pros)
+        
+        // Vérifier que expectedAmount existe
+        if (expectedAmount === null || expectedAmount === undefined) {
+          console.error(`expectedAmount manquant pour la commande ${order.id}`);
+          await Order.updateStatus(order.id, "failed");
+          return reply.code(400).send({ error: "expectedAmount manquant" });
+        }
+
+        // Comparer avec une tolérance de 1 centime pour les arrondis
+        // Pour les particuliers : on compare TTC avec TTC
+        // Pour les pros : on compare HT avec HT
+        const amountDifference = Math.abs((stripeAmountTotal || 0) - expectedAmount);
+        
+        if (amountDifference > 1) {
+          console.error(
+            `Incohérence de montant pour la commande ${order.id}: ` +
+            `Stripe=${stripeAmountTotal}, Attendu=${expectedAmount}, Différence=${amountDifference}, isPro=${order.isPro}`
+          );
+          // Ne pas confirmer le paiement en cas d'incohérence
+          await Order.updateStatus(order.id, "failed");
+          return reply.code(400).send({ 
+            error: "Incohérence de montant détectée",
+            stripeAmount: stripeAmountTotal,
+            expectedAmount,
+            isPro: order.isPro,
+          });
+        }
+
+        // Les montants correspondent, confirmer le paiement
         await Order.updateStatus(order.id, "paid");
         await Order.updatePaymentIntent(order.id, session.payment_intent);
 
-        // Vider le panier de l'utilisateur
+        // Vider le panier UNIQUEMENT après confirmation du paiement
         await Cart.clear(order.userId);
 
         console.log(`Commande ${order.id} confirmée et panier vidé`);
+      } else {
+        console.warn(`Session ${session.id} non payée (statut: ${session.payment_status})`);
       }
-    } else if (event.type === "payment_intent.succeeded") {
-      const paymentIntent = event.data.object;
-      console.log("Paiement réussi:", paymentIntent.id);
-    } else if (event.type === "payment_intent.payment_failed") {
-      const paymentIntent = event.data.object;
-      
-      // Trouver la commande par payment intent
-      const order = await Order.findByStripePaymentIntentId(paymentIntent.id);
-      if (order) {
+    } else if (event.type === "checkout.session.async_payment_failed") {
+      const session = event.data.object;
+
+      // Trouver la commande par session ID
+      const order = await Order.findByStripeSessionId(session.id);
+
+      if (order && order.status === "pending") {
         await Order.updateStatus(order.id, "failed");
-        console.log(`Commande ${order.id} marquée comme échouée`);
+        console.log(`Commande ${order.id} marquée comme échouée (paiement asynchrone échoué)`);
       }
     }
 
@@ -205,7 +274,9 @@ export const stripeWebhook = async (request, reply) => {
   }
 };
 
-// Vérifier le statut d'une session
+/**
+ * Vérifier le statut d'une session
+ */
 export const getSessionStatus = async (request, reply) => {
   try {
     const { sessionId } = request.params;
@@ -236,4 +307,3 @@ export const getSessionStatus = async (request, reply) => {
     });
   }
 };
-

@@ -15,6 +15,9 @@
     "migrate:bestseller-promotion": "node script/addBestsellerPromotionColumns.js",
     "migrate:orders": "node script/createOrdersTable.js",
     "migrate:orders-ispro": "node script/addIsProToOrders.js",
+    "migrate:orders-expected-amount": "node script/addExpectedAmountToOrders.js",
+    "migrate:invoices": "node script/createInvoicesTable.js",
+    "migrate:deliveries": "node script/createDeliveriesTable.js",
     "create-admin": "node script/createAdmin.js"
   },
   "keywords": [],

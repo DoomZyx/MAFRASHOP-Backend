@@ -16,3 +16,8 @@ export default async function ordersRoutes(fastify, options) {
   fastify.get("/api/admin/orders", { preHandler: verifyToken }, getAllOrders);
 }
 
+
+
+
+
+

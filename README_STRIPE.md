@@ -74,3 +74,8 @@ Le bouton "COMMANDER" dans le panier déclenche automatiquement le checkout Stri
 - Tester un paiement : `stripe trigger checkout.session.completed`
 - Voir les logs : `stripe logs tail`
 
+
+
+
+
+

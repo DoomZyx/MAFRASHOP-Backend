@@ -9,7 +9,6 @@ const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Parser DATABASE_URL si elle existe, sinon utiliser les variables individuelles
 const parseDatabaseUrl = (url) => {
   if (!url) return null;
   try {
@@ -38,32 +37,31 @@ const dbConfig = process.env.DATABASE_URL
 
 if (!dbConfig || !dbConfig.database) {
   console.error("❌ Configuration de base de données manquante");
-  console.error("Vérifiez vos variables d'environnement DATABASE_URL ou POSTGRES_*");
   process.exit(1);
 }
 
 const pool = new Pool(dbConfig);
 
-async function addIsProToOrders() {
+async function createInvoicesTable() {
   try {
-    console.log("=== Ajout de la colonne is_pro à la table orders ===\n");
+    console.log("=== Création de la table invoices ===\n");
 
-    const sqlPath = path.join(__dirname, "addIsProToOrders.sql");
+    const sqlPath = path.join(__dirname, "createInvoicesTable.sql");
     const sql = fs.readFileSync(sqlPath, "utf8");
 
     await pool.query(sql);
 
-    console.log("✅ Colonne 'is_pro' ajoutée avec succès");
-    console.log("✅ Index créé avec succès");
+    console.log("✅ Table 'invoices' créée avec succès");
+    console.log("✅ Index créés avec succès");
   } catch (error) {
-    console.error("❌ Erreur lors de l'ajout de la colonne:", error);
+    console.error("❌ Erreur lors de la création de la table:", error);
     process.exit(1);
   } finally {
     await pool.end();
   }
 }
 
-addIsProToOrders();
+createInvoicesTable();
 
 
 
