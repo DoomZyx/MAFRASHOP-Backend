@@ -18,6 +18,9 @@
     "migrate:orders-expected-amount": "node script/addExpectedAmountToOrders.js",
     "migrate:invoices": "node script/createInvoicesTable.js",
     "migrate:deliveries": "node script/createDeliveriesTable.js",
+    "migrate:products-stock-sku": "node script/addStockAndSkuToProducts.js",
+    "migrate:stock-quantity": "node script/updateStockToQuantity.js",
+    "migrate:orders-status": "node script/addShippedPreparingStatus.js",
     "create-admin": "node script/createAdmin.js"
   },
   "keywords": [],
@@ -37,6 +40,7 @@
     "mongoose": "^9.0.2",
     "nodemon": "^3.1.11",
     "passport-google-oauth20": "^2.0.0",
+    "pdfkit": "^0.15.0",
     "pg": "^8.17.1",
     "stripe": "^14.21.0"
   },

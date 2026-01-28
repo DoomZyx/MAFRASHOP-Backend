@@ -186,6 +186,23 @@ class Order {
     return result.rows.map(mapOrder);
   }
 
+  // Trouver toutes les commandes avec les infos utilisateur filtrées par statut
+  static async findAllWithUserByStatus(status) {
+    const result = await pool.query(
+      `SELECT 
+        o.*,
+        u.email as user_email,
+        u.first_name as user_first_name,
+        u.last_name as user_last_name
+      FROM orders o
+      INNER JOIN users u ON o.user_id = u.id
+      WHERE o.status = $1
+      ORDER BY o.created_at DESC`,
+      [status]
+    );
+    return result.rows.map(mapOrder);
+  }
+
   // Trouver une commande par ID avec les infos utilisateur
   static async findByIdWithUser(id) {
     const result = await pool.query(

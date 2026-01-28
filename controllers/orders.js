@@ -1,4 +1,5 @@
 import Order from "../models/orders.js";
+import Delivery from "../models/deliveries.js";
 
 // Récupérer toutes les commandes d'un utilisateur
 export const getUserOrders = async (request, reply) => {
@@ -6,13 +7,15 @@ export const getUserOrders = async (request, reply) => {
     const userId = request.user.id;
     const orders = await Order.findByUserId(userId);
 
-    // Pour chaque commande, récupérer les items
+    // Pour chaque commande, récupérer les items et la livraison
     const ordersWithItems = await Promise.all(
       orders.map(async (order) => {
         const items = await Order.findOrderItems(order.id);
+        const delivery = await Delivery.findByOrderId(order.id);
         return {
           ...order,
           items,
+          delivery: delivery || null,
         };
       })
     );
@@ -58,6 +61,7 @@ export const getOrderById = async (request, reply) => {
     }
 
     const items = await Order.findOrderItems(id);
+    const delivery = await Delivery.findByOrderId(id);
 
     reply.type("application/json");
     return reply.send({
@@ -66,6 +70,7 @@ export const getOrderById = async (request, reply) => {
         order: {
           ...order,
           items,
+          delivery: delivery || null,
         },
       },
     });
@@ -92,13 +97,15 @@ export const getAllOrders = async (request, reply) => {
 
     const orders = await Order.findAllWithUser();
 
-    // Pour chaque commande, récupérer les items
+    // Pour chaque commande, récupérer les items et la livraison
     const ordersWithItems = await Promise.all(
       orders.map(async (order) => {
         const items = await Order.findOrderItems(order.id);
+        const delivery = await Delivery.findByOrderId(order.id);
         return {
           ...order,
           items,
+          delivery: delivery || null,
         };
       })
     );

@@ -1,6 +1,8 @@
 import Stripe from "stripe";
 import Order from "../models/orders.js";
 import Cart from "../models/cart.js";
+import Invoice from "../models/invoices.js";
+import Delivery from "../models/deliveries.js";
 import { calculateCartTotal } from "../utils/priceCalculation.js";
 
 if (!process.env.STRIPE_SECRET_KEY) {
@@ -250,6 +252,33 @@ export const stripeWebhook = async (request, reply) => {
 
         // Vider le panier UNIQUEMENT après confirmation du paiement
         await Cart.clear(order.userId);
+
+        // Générer automatiquement la facture
+        try {
+          const invoice = await Invoice.createFromOrder(order.id);
+          if (invoice) {
+            console.log(`Facture ${invoice.invoiceNumber} créée pour la commande ${order.id}`);
+          }
+        } catch (invoiceError) {
+          // Ne pas bloquer le processus si la génération de facture échoue
+          console.error(`Erreur lors de la création de la facture pour la commande ${order.id}:`, invoiceError);
+        }
+
+        // Créer automatiquement la livraison avec date estimée selon le type de compte
+        // Pro : 24h max, Particuliers : 72h max
+        try {
+          const delivery = await Delivery.createFromOrder(order.id, order.isPro);
+          if (delivery) {
+            console.log(
+              `Livraison créée pour la commande ${order.id} ` +
+              `(date estimée: ${delivery.estimatedDeliveryDate}, ` +
+              `type: ${order.isPro ? "Pro (24h)" : "Particulier (72h)"})`
+            );
+          }
+        } catch (deliveryError) {
+          // Ne pas bloquer le processus si la création de livraison échoue
+          console.error(`Erreur lors de la création de la livraison pour la commande ${order.id}:`, deliveryError);
+        }
 
         console.log(`Commande ${order.id} confirmée et panier vidé`);
       } else {

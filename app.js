@@ -9,6 +9,12 @@ import favoritesRoutes from "./routes/favorites.js";
 import websocketRoutes from "./routes/websocket.js";
 import paymentRoutes from "./routes/payment.js";
 import ordersRoutes from "./routes/orders.js";
+import invoicesRoutes from "./routes/invoices.js";
+import deliveriesRoutes from "./routes/deliveries.js";
+import adminProductsRoutes from "./routes/admin/products.js";
+import adminStockRoutes from "./routes/admin/stock.js";
+import adminStatsRoutes from "./routes/admin/stats.js";
+import adminOrdersRoutes from "./routes/admin/orders.js";
 import { sendToUser } from "./routes/websocket.js";
 
 export { sendToUser };
@@ -128,6 +134,12 @@ fastify.register(favoritesRoutes);
 fastify.register(websocketRoutes);
 fastify.register(paymentRoutes);
 fastify.register(ordersRoutes);
+fastify.register(invoicesRoutes);
+fastify.register(deliveriesRoutes);
+fastify.register(adminProductsRoutes);
+fastify.register(adminStockRoutes);
+fastify.register(adminStatsRoutes);
+fastify.register(adminOrdersRoutes);
 
 // Initialiser la connexion à la base de données
 await connectDB();
