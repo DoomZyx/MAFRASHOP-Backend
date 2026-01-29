@@ -1,7 +1,6 @@
-import "./loadEnv.js";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import pg from "pg";
+import pool from "./db.js";
 import productsRoutes from "./routes/products.js";
 import authRoutes from "./routes/auth.js";
 import cartRoutes from "./routes/cart.js";
@@ -19,46 +18,10 @@ import { sendToUser } from "./routes/websocket.js";
 
 export { sendToUser };
 
-const { Pool } = pg;
-
-// Parser DATABASE_URL si elle existe, sinon utiliser les variables individuelles
-const parseDatabaseUrl = (url) => {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    return {
-      host: parsed.hostname,
-      port: parseInt(parsed.port || "5432", 10),
-      database: parsed.pathname.slice(1),
-      user: parsed.username,
-      password: parsed.password,
-    };
-  } catch (error) {
-    console.error("Erreur parsing DATABASE_URL:", error);
-    return null;
-  }
-};
-
-const dbConfig = process.env.DATABASE_URL 
-  ? parseDatabaseUrl(process.env.DATABASE_URL)
-  : {
-      host: process.env.POSTGRES_HOST || "localhost",
-      port: parseInt(process.env.POSTGRES_PORT || "5432", 10),
-      database: process.env.POSTGRES_DB,
-      user: process.env.POSTGRES_USER || "postgres",
-      password: process.env.POSTGRES_PASSWORD,
-    };
-
-if (!dbConfig || !dbConfig.database || !dbConfig.password) {
-  throw new Error("Configuration PostgreSQL manquante. Vérifie DATABASE_URL ou POSTGRES_* dans .env");
-}
-
-const pool = new Pool(dbConfig);
-
 async function connectDB() {
   try {
     await pool.query("SELECT 1");
-    const isSupabase = dbConfig.host && dbConfig.host.includes("supabase");
+    const isSupabase = process.env.DATABASE_URL?.includes("supabase");
     const dbType = isSupabase ? "Supabase" : "PostgreSQL local";
     if (isSupabase) {
       console.log(`Connexion ${dbType} réussie`);

@@ -1,42 +1,4 @@
-import "../loadEnv.js";
-import pg from "pg";
-
-const { Pool } = pg;
-
-// Parser DATABASE_URL si elle existe, sinon utiliser les variables individuelles
-const parseDatabaseUrl = (url) => {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    return {
-      host: parsed.hostname,
-      port: parseInt(parsed.port || "5432", 10),
-      database: parsed.pathname.slice(1),
-      user: parsed.username,
-      password: parsed.password,
-    };
-  } catch (error) {
-    return null;
-  }
-};
-
-const dbConfig = process.env.DATABASE_URL
-  ? parseDatabaseUrl(process.env.DATABASE_URL)
-  : {
-      host: process.env.POSTGRES_HOST || "localhost",
-      port: parseInt(process.env.POSTGRES_PORT || "5432", 10),
-      database: process.env.POSTGRES_DB,
-      user: process.env.POSTGRES_USER || "postgres",
-      password: process.env.POSTGRES_PASSWORD,
-    };
-
-if (!dbConfig || !dbConfig.database) {
-  console.error("Configuration de base de données manquante");
-  console.error("Vérifiez vos variables d'environnement DATABASE_URL ou POSTGRES_*");
-  process.exit(1);
-}
-
-const pool = new Pool(dbConfig);
+import pool from "../db.js";
 
 async function addExpectedAmountColumn() {
   try {

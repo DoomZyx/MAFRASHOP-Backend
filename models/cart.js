@@ -1,37 +1,5 @@
-import "../loadEnv.js";
-import pg from "pg";
+import pool from "../db.js";
 import Product from "./products.js";
-
-const { Pool } = pg;
-
-// Parser DATABASE_URL si elle existe, sinon utiliser les variables individuelles
-const parseDatabaseUrl = (url) => {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    return {
-      host: parsed.hostname,
-      port: parseInt(parsed.port || "5432", 10),
-      database: parsed.pathname.slice(1),
-      user: parsed.username,
-      password: parsed.password,
-    };
-  } catch (error) {
-    return null;
-  }
-};
-
-const dbConfig = process.env.DATABASE_URL 
-  ? parseDatabaseUrl(process.env.DATABASE_URL)
-  : {
-      host: process.env.POSTGRES_HOST || "localhost",
-      port: parseInt(process.env.POSTGRES_PORT || "5432", 10),
-      database: process.env.POSTGRES_DB,
-      user: process.env.POSTGRES_USER || "postgres",
-      password: process.env.POSTGRES_PASSWORD,
-    };
-
-const pool = new Pool(dbConfig);
 
 // Mapper les données du panier avec les produits (JOIN)
 const mapCartItem = (row) => {
