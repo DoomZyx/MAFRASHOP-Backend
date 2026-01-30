@@ -497,15 +497,17 @@ export const requestPro = async (request, reply) => {
       });
     }
 
-    if (
-      user.proStatus !== "none" &&
-      user.proStatus !== "rejected" &&
-      user.proStatus !== "pending"
-    ) {
+    if (user.proStatus === "verified") {
       return reply.code(400).send({
         success: false,
-        message:
-          "Une demande de validation professionnelle est déjà en cours ou validée",
+        message: "Votre compte professionnel est déjà validé",
+      });
+    }
+
+    if (user.proStatus === "pending" && user.decisionSource != null) {
+      return reply.code(400).send({
+        success: false,
+        message: "Une décision a déjà été prise sur votre demande",
       });
     }
 
@@ -520,6 +522,11 @@ export const requestPro = async (request, reply) => {
       },
       proStatus: "pending",
       isPro: false,
+      verificationMode: "auto",
+      decisionSource: null,
+      decisionAt: null,
+      reviewedByAdminId: null,
+      lastVerificationError: null,
     };
 
     await User.update(user.id, updateData);
@@ -562,6 +569,7 @@ export const requestPro = async (request, reply) => {
 export const validateProManually = async (request, reply) => {
   try {
     const { userId, approved } = request.body;
+    const adminId = request.user.id;
 
     if (!userId) {
       return reply.code(400).send({
@@ -578,10 +586,21 @@ export const validateProManually = async (request, reply) => {
       });
     }
 
-    // Validation manuelle : approuver ou rejeter
+    if (user.decisionSource != null) {
+      return reply.code(400).send({
+        success: false,
+        message:
+          "Une décision a déjà été prise pour ce compte (automatique ou manuelle). Aucune modification possible.",
+      });
+    }
+
     const updatedUser = await User.update(user.id, {
-      proStatus: approved ? "validated" : "rejected",
+      proStatus: approved ? "verified" : "rejected",
       isPro: approved || false,
+      decisionSource: "manual",
+      decisionAt: new Date().toISOString(),
+      reviewedByAdminId: adminId,
+      lastVerificationError: null,
     });
 
     reply.type("application/json");
@@ -600,6 +619,91 @@ export const validateProManually = async (request, reply) => {
     return reply.code(500).send({
       success: false,
       message: "Erreur lors de la validation",
+    });
+  }
+};
+
+/**
+ * Reprise automatique INSEE (admin uniquement).
+ * Autorisé uniquement si pro_status = pending, verification_mode = manual, decision_source IS NULL.
+ * Repasse verification_mode = auto et relance validateCompanyAsync.
+ */
+export const retryProInsee = async (request, reply) => {
+  try {
+    const { userId } = request.body;
+
+    if (!userId) {
+      return reply.code(400).send({
+        success: false,
+        message: "L'ID de l'utilisateur est requis",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return reply.code(404).send({
+        success: false,
+        message: "Utilisateur introuvable",
+      });
+    }
+
+    if (user.decisionSource != null) {
+      return reply.code(400).send({
+        success: false,
+        message:
+          "Une décision a déjà été prise pour ce compte. La reprise automatique INSEE n'est plus possible.",
+      });
+    }
+
+    if (user.proStatus !== "pending") {
+      return reply.code(400).send({
+        success: false,
+        message: "Seuls les comptes en attente (pending) peuvent être retentés.",
+      });
+    }
+
+    if (user.verificationMode !== "manual") {
+      return reply.code(400).send({
+        success: false,
+        message: "La reprise INSEE est réservée aux demandes passées en vérification manuelle (erreur technique).",
+      });
+    }
+
+    if (!user.company?.siret) {
+      return reply.code(400).send({
+        success: false,
+        message: "Aucun SIRET enregistré pour cet utilisateur.",
+      });
+    }
+
+    await User.update(user.id, { verificationMode: "auto" });
+
+    const additionalData = {
+      address: user.company?.address,
+      city: user.company?.city,
+      zipCode: user.company?.zipCode,
+    };
+
+    validateCompanyAsync(
+      user.id,
+      user.company.siret,
+      user.company?.name || "",
+      additionalData
+    ).catch((err) => {
+      console.error(`Erreur reprise INSEE pour l'utilisateur ${user.id}:`, err);
+    });
+
+    reply.type("application/json");
+    return reply.code(200).send({
+      success: true,
+      message: "Vérification INSEE relancée. Le statut sera mis à jour sous peu.",
+    });
+  } catch (error) {
+    console.error("Erreur lors de la reprise INSEE:", error);
+    reply.type("application/json");
+    return reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la reprise de la vérification INSEE",
     });
   }
 };
@@ -634,8 +738,12 @@ export const testProRequest = async (request, reply) => {
         city: city?.trim() || "",
         zipCode: zipCode?.trim() || "",
       },
-      proStatus: "validated",
+      proStatus: "verified",
       isPro: true,
+      decisionSource: "auto",
+      decisionAt: new Date().toISOString(),
+      verificationMode: "auto",
+      lastVerificationError: null,
     });
 
     reply.type("application/json");
@@ -699,6 +807,71 @@ export const updateProfile = async (request, reply) => {
     reply.code(500).send({
       success: false,
       message: "Erreur lors de la MAJ du profile",
+    });
+  }
+};
+
+export const updateCompanyProfile = async (request, reply) => {
+  try {
+    const userId = request.user.id;
+    const { companyName, siret, address, city, zipCode, companyPhone, companyEmail } = request.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return reply.code(404).send({
+        success: false,
+        message: "Utilisateur introuvable",
+      });
+    }
+
+    if (!user.isPro) {
+      return reply.code(403).send({
+        success: false,
+        message: "Seuls les comptes professionnels peuvent modifier les informations entreprise",
+      });
+    }
+
+    if (!companyName?.trim() || !siret?.trim()) {
+      return reply.code(400).send({
+        success: false,
+        message: "Le nom de l'entreprise et le SIRET sont requis",
+      });
+    }
+
+    if (siret.replace(/\D/g, "").length !== 14) {
+      return reply.code(400).send({
+        success: false,
+        message: "Le SIRET doit contenir exactement 14 chiffres",
+      });
+    }
+
+    const updatedUser = await User.update(userId, {
+      company: {
+        ...(user.company || {}),
+        name: companyName.trim(),
+        siret: siret.replace(/\D/g, ""),
+        address: address?.trim() || null,
+        city: city?.trim() || null,
+        zipCode: zipCode?.trim() || null,
+        phone: companyPhone?.trim() || null,
+        email: companyEmail?.trim() || null,
+      },
+    });
+
+    reply.type("application/json");
+    reply.send({
+      success: true,
+      message: "Informations entreprise mises a jour avec succes",
+      data: {
+        user: User.toJSON(updatedUser),
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la mise a jour des infos entreprise:", error);
+    reply.type("application/json");
+    return reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la mise a jour des informations entreprise",
     });
   }
 };

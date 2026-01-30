@@ -2,6 +2,9 @@
 const INSEE_API_BASE_URL = "https://api.insee.fr/entreprises/sirene/V3.11";
 const INSEE_TOKEN_URL = "https://api.insee.fr/token";
 
+/** Timeout requête SIRET (ms) - au-delà = erreur technique api_timeout */
+const SIRET_REQUEST_TIMEOUT_MS = 15000;
+
 // Cache du token OAuth2
 let tokenCache = {
   /** @type {string | null} */
@@ -183,11 +186,12 @@ export const verifySiretAndCompanyName = async (
     additionalData = {};
   }
   try {
-    // Vérification du format du SIRET
+    // Vérification du format du SIRET (erreur métier, pas technique)
     if (!siret || siret.length !== 14 || !/^\d+$/.test(siret)) {
       return {
         valid: false,
         error: "SIRET invalide (doit contenir 14 chiffres)",
+        lastVerificationError: "invalid_siret",
       };
     }
 
@@ -197,87 +201,121 @@ export const verifySiretAndCompanyName = async (
     // Récupération d'un token valide
     const accessToken = await getValidToken();
 
-    // Requête à l'API INSEE
-    const response = await fetch(`${INSEE_API_BASE_URL}/siret/${siret}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      },
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), SIRET_REQUEST_TIMEOUT_MS);
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        return {
-          valid: false,
-          error: "SIRET introuvable dans la base INSEE",
-        };
-      }
-      if (response.status === 401 || response.status === 403) {
-        // Token expiré, réessayer avec un nouveau token
-        if (response.status === 401) {
-          tokenCache.accessToken = null;
-          tokenCache.expiresAt = null;
-          const newToken = await getValidToken();
+    try {
+      const response = await fetch(`${INSEE_API_BASE_URL}/siret/${siret}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+      });
 
-          const retryResponse = await fetch(
-            `${INSEE_API_BASE_URL}/siret/${siret}`,
-            {
-              method: "GET",
-              headers: {
-                Authorization: `Bearer ${newToken}`,
-                Accept: "application/json",
-              },
-            }
-          );
+      clearTimeout(timeoutId);
 
-          if (!retryResponse.ok) {
-            const errorText = await retryResponse.text();
-            console.error(
-              `Erreur API INSEE après refresh token: ${retryResponse.status} - ${errorText}`
-            );
-            return {
-              valid: false,
-              error: "Erreur d'authentification API INSEE",
-            };
-          }
-
-          // Utiliser les données de la nouvelle requête
-          const retryData = await retryResponse.json();
-          return processInseeData(
-            retryData,
-            siret,
-            companyName,
-            additionalData
-          );
+      if (!response.ok) {
+        if (response.status === 404) {
+          return {
+            valid: false,
+            error: "SIRET introuvable dans la base INSEE",
+            lastVerificationError: "invalid_siret",
+          };
         }
-
-        console.error("Erreur d'authentification API INSEE");
+        if (response.status >= 500 || response.status === 503) {
+          const errorText = await response.text();
+          console.error(`Erreur technique API INSEE: ${response.status} - ${errorText}`);
+          return {
+            valid: false,
+            technicalError: "api_unavailable",
+            error: "API INSEE indisponible",
+          };
+        }
+        if (response.status === 401 || response.status === 403) {
+          if (response.status === 401) {
+            tokenCache.accessToken = null;
+            tokenCache.expiresAt = null;
+            const newToken = await getValidToken();
+            const retryController = new AbortController();
+            const retryTimeoutId = setTimeout(() => retryController.abort(), SIRET_REQUEST_TIMEOUT_MS);
+            try {
+              const retryResponse = await fetch(
+                `${INSEE_API_BASE_URL}/siret/${siret}`,
+                {
+                  method: "GET",
+                  headers: {
+                    Authorization: `Bearer ${newToken}`,
+                    Accept: "application/json",
+                  },
+                  signal: retryController.signal,
+                }
+              );
+              clearTimeout(retryTimeoutId);
+              if (!retryResponse.ok) {
+                const errText = await retryResponse.text();
+                console.error(`Erreur API INSEE après refresh token: ${retryResponse.status} - ${errText}`);
+                return {
+                  valid: false,
+                  technicalError: "api_unavailable",
+                  error: "Erreur d'authentification API INSEE",
+                };
+              }
+              const retryData = await retryResponse.json();
+              return processInseeData(retryData, siret, companyName, additionalData);
+            } catch (retryErr) {
+              clearTimeout(retryTimeoutId);
+              if (retryErr.name === "AbortError") {
+                return { valid: false, technicalError: "api_timeout", error: "Délai dépassé (API INSEE)" };
+              }
+              throw retryErr;
+            }
+          }
+          console.error("Erreur d'authentification API INSEE");
+          return {
+            valid: false,
+            technicalError: "api_unavailable",
+            error: "Erreur d'authentification API INSEE",
+          };
+        }
+        const errorText = await response.text();
+        console.error(`Erreur API INSEE: ${response.status} - ${errorText}`);
         return {
           valid: false,
-          error: "Erreur d'authentification API INSEE",
+          technicalError: "api_unavailable",
+          error: "Erreur lors de la vérification INSEE",
         };
       }
-      const errorText = await response.text();
-      console.error(`Erreur API INSEE: ${response.status} - ${errorText}`);
-      return {
-        valid: false,
-        error: "Erreur lors de la vérification INSEE",
-      };
-    }
 
-    const data = await response.json();
-    return processInseeData(data, siret, companyName, additionalData);
+      const data = await response.json();
+      return processInseeData(data, siret, companyName, additionalData);
+    } catch (fetchErr) {
+      clearTimeout(timeoutId);
+      if (fetchErr.name === "AbortError") {
+        return {
+          valid: false,
+          technicalError: "api_timeout",
+          error: "Délai dépassé (API INSEE)",
+        };
+      }
+      throw fetchErr;
+    }
   } catch (error) {
     if (error.message.includes("Rate limit")) {
       return {
         valid: false,
+        technicalError: "api_unavailable",
         error: error.message,
       };
+    }
+    if (error.technicalError) {
+      return error;
     }
     console.error("Erreur lors de la vérification INSEE:", error);
     return {
       valid: false,
+      technicalError: "api_unavailable",
       error: "Erreur technique lors de la vérification",
     };
   }
@@ -330,6 +368,7 @@ const processInseeData = (data, siret, companyName, additionalData = {}) => {
     return {
       valid: false,
       error: "Données INSEE invalides",
+      lastVerificationError: "invalid_siret",
     };
   }
 
@@ -350,6 +389,7 @@ const processInseeData = (data, siret, companyName, additionalData = {}) => {
     return {
       valid: false,
       error: "Nom d'entreprise introuvable dans les données INSEE",
+      lastVerificationError: "invalid_siret",
     };
   }
 
@@ -360,6 +400,7 @@ const processInseeData = (data, siret, companyName, additionalData = {}) => {
       valid: false,
       error: "Entreprise inactive ou fermée",
       companyName: inseeCompanyName,
+      lastVerificationError: "company_inactive",
     };
   }
 
@@ -513,6 +554,7 @@ const processInseeData = (data, siret, companyName, additionalData = {}) => {
   return {
     valid: isValid,
     error: errorMessage,
+    lastVerificationError: !isValid ? "invalid_siret" : undefined,
     warnings: validationWarnings.length > 0 ? validationWarnings : null,
     companyName: inseeCompanyName,
     siret: siret,

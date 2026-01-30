@@ -39,8 +39,7 @@ export const createCheckoutSession = async (request, reply) => {
 
 
     // Calculer les prix côté backend (SEULE source de vérité)
-    // Pour les particuliers : calcule le TTC (HT * 1.2) côté backend
-    // Pour les pros : reste en HT
+    // Pour tous (particuliers et pros) : TTC = HT * 1.2 (TVA 20% à la validation du panier)
     const cartCalculation = await calculateCartTotal(cartItems, isPro);
 
     if (cartCalculation.items.length === 0) {
@@ -52,9 +51,7 @@ export const createCheckoutSession = async (request, reply) => {
 
     // Préparer les line items pour Stripe
     // IMPORTANT : 
-    // - Pour les particuliers : on envoie le prix TTC (calculé côté backend) avec tax_behavior: "inclusive"
-    // - Pour les pros : on envoie le prix HT avec tax_behavior: "exclusive"
-    // Stripe vérifiera la TVA automatiquement avec automatic_tax
+    // Pour tous (particuliers et pros) : on envoie le prix TTC (HT + 20% TVA) avec tax_behavior: "inclusive"
     const lineItems = cartCalculation.items.map((item) => {
       // Trouver l'item du panier correspondant
       const cartItem = cartItems.find((ci) => ci && ci.productId && ci.productId.id === item.productId);
@@ -68,11 +65,10 @@ export const createCheckoutSession = async (request, reply) => {
             description: product?.description || product?.ref || "",
             images: product?.url_image ? [product.url_image] : [],
           },
-          // Prix unitaire en centimes (TTC pour particuliers, HT pour pros)
+          // Prix unitaire en centimes (TTC pour tous : HT + 20% TVA)
           unit_amount: item.unitPriceInCents,
-          // Pour les particuliers : prix inclut déjà la TVA (calculée côté backend)
-          // Pour les pros : prix HT, Stripe ne calculera pas de TVA
-          tax_behavior: isPro ? "exclusive" : "inclusive",
+          // Prix déjà TTC (TVA incluse) pour tous
+          tax_behavior: "inclusive",
         },
         quantity: item.quantity,
       };
@@ -80,14 +76,13 @@ export const createCheckoutSession = async (request, reply) => {
 
     // Créer la commande EN BASE AVANT la redirection Stripe
     // On stocke le snapshot des items et le montant attendu en centimes
-    // Pour les particuliers : expectedAmount est en TTC (calculé côté backend)
-    // Pour les pros : expectedAmount est en HT
+    // Pour tous : totalAmount et expectedAmount sont en TTC (HT + 20% TVA)
     const order = await Order.create({
       userId,
       stripeSessionId: null,
       status: "pending",
-      totalAmount: isPro ? cartCalculation.totalHT : cartCalculation.totalTTC, // Montant en euros (HT pour pros, TTC pour particuliers)
-      expectedAmount: cartCalculation.totalInCents, // Montant attendu en centimes (HT pour pros, TTC pour particuliers)
+      totalAmount: cartCalculation.totalTTC, // Montant TTC en euros (HT + 20% TVA pour tous)
+      expectedAmount: cartCalculation.totalInCents, // Montant attendu en centimes (TTC)
       isPro,
       shippingAddress: shippingAddress || null,
       items: cartCalculation.items.map(item => ({

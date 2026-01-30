@@ -21,9 +21,9 @@ if (!fs.existsSync(invoicesDir)) {
 async function generateInvoicePDF(invoice, order, items, user) {
   // Calculer les totaux
   const totalHT = items.reduce((sum, item) => sum + item.totalPrice, 0);
-  const TVA_RATE = 0.2; // 20%
-  const totalTVA = order.isPro ? 0 : totalHT * TVA_RATE;
-  const totalTTC = order.isPro ? totalHT : totalHT + totalTVA;
+  const TVA_RATE = 0.2; // 20% - appliqué à tous (particuliers et pros)
+  const totalTVA = totalHT * TVA_RATE;
+  const totalTTC = totalHT + totalTVA;
 
   // Générer le PDF
   const doc = new PDFDocument({ margin: 50, size: "A4" });
@@ -132,18 +132,16 @@ async function generateInvoicePDF(invoice, order, items, user) {
     y
   );
 
-  if (!order.isPro) {
-    y += 20;
-    doc.text("TVA (20%):", 400, y);
-    doc.text(
-      new Intl.NumberFormat("fr-FR", {
-        style: "currency",
-        currency: "EUR",
-      }).format(totalTVA),
-      480,
-      y
-    );
-  }
+  y += 20;
+  doc.text("TVA (20%):", 400, y);
+  doc.text(
+    new Intl.NumberFormat("fr-FR", {
+      style: "currency",
+      currency: "EUR",
+    }).format(totalTVA),
+    480,
+    y
+  );
 
   y += 20;
   doc.fontSize(12).font("Helvetica-Bold");

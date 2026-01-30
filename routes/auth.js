@@ -5,8 +5,10 @@ import {
   getMe,
   logout,
   updateProfile,
+  updateCompanyProfile,
   requestPro,
   validateProManually,
+  retryProInsee,
   testProRequest,
   adminLogin,
   adminGoogleCallback,
@@ -42,6 +44,12 @@ export default async function authRoutes(fastify, options) {
 
   fastify.put("/api/auth/profile", { preHandler: verifyToken }, updateProfile);
 
+  fastify.put(
+    "/api/auth/profile/company",
+    { preHandler: verifyToken },
+    updateCompanyProfile
+  );
+
   fastify.post(
     "/api/auth/pro/request",
     { preHandler: verifyToken },
@@ -60,6 +68,13 @@ export default async function authRoutes(fastify, options) {
     "/api/auth/pro/validate",
     { preHandler: [verifyToken, isAdmin] },
     validateProManually
+  );
+
+  // Endpoint admin : reprendre la vérification INSEE (quand verification_mode = manual, decision_source = null)
+  fastify.post(
+    "/api/auth/pro/retry-insee",
+    { preHandler: [verifyToken, isAdmin] },
+    retryProInsee
   );
 
   // Admin routes

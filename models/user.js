@@ -20,6 +20,11 @@ const mapUser = (row) => {
     role: row.role,
     isPro: row.is_pro,
     proStatus: row.pro_status,
+    verificationMode: row.verification_mode,
+    decisionSource: row.decision_source,
+    decisionAt: row.decision_at ? row.decision_at.toISOString() : null,
+    reviewedByAdminId: row.reviewed_by_admin_id != null ? row.reviewed_by_admin_id.toString() : null,
+    lastVerificationError: row.last_verification_error,
     company: row.company_name
       ? {
           name: row.company_name,
@@ -66,9 +71,10 @@ class User {
       `INSERT INTO users (
         email, password, first_name, last_name, phone, address, city, zip_code,
         avatar, google_id, auth_provider, is_verified, role, is_pro, pro_status,
+        verification_mode, decision_source, decision_at, reviewed_by_admin_id, last_verification_error,
         company_name, company_siret, company_address, company_city, company_zip_code,
         company_phone, company_email
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
       RETURNING *`,
       [
         userData.email.toLowerCase(),
@@ -86,6 +92,11 @@ class User {
         userData.role || "user",
         userData.isPro || false,
         userData.proStatus || "none",
+        userData.verificationMode || "auto",
+        userData.decisionSource ?? null,
+        userData.decisionAt ?? null,
+        userData.reviewedByAdminId ?? null,
+        userData.lastVerificationError ?? null,
         userData.company?.name || null,
         userData.company?.siret || null,
         userData.company?.address || null,
@@ -123,6 +134,11 @@ class User {
       role: "role",
       isPro: "is_pro",
       proStatus: "pro_status",
+      verificationMode: "verification_mode",
+      decisionSource: "decision_source",
+      decisionAt: "decision_at",
+      reviewedByAdminId: "reviewed_by_admin_id",
+      lastVerificationError: "last_verification_error",
     };
 
     // Mapping pour les champs company

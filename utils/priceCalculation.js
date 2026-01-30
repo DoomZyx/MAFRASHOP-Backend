@@ -54,8 +54,8 @@ export async function calculateProductPrice(product, quantity, isPro) {
 /**
  * Calcule le prix total pour un panier complet
  * Pour les particuliers : calcule le TTC (HT * 1.2) côté backend
- * Pour les pros : reste en HT
- * 
+ * Pour les pros : HT + TVA 20% = TTC (la TVA est ajoutée à la validation du panier)
+ *
  * @param {Array} cartItems - Les items du panier
  * @param {boolean} isPro - Si l'utilisateur est un professionnel
  * @returns {Object} { items: Array, totalHT: number, totalTTC: number, totalInCents: number }
@@ -84,16 +84,11 @@ export async function calculateCartTotal(cartItems, isPro) {
       isPro
     );
 
-    // Pour les particuliers : calculer le TTC côté backend (HT * 1.2)
-    // Pour les pros : rester en HT
-    const unitPriceTTC = isPro 
-      ? priceData.unitPriceHT 
-      : priceData.unitPriceHT * (1 + TVA_RATE);
-    const totalPriceTTC = isPro 
-      ? priceData.totalPriceHT 
-      : priceData.totalPriceHT * (1 + TVA_RATE);
+    // TTC = HT * (1 + TVA) pour tous (particuliers et pros)
+    const unitPriceTTC = priceData.unitPriceHT * (1 + TVA_RATE);
+    const totalPriceTTC = priceData.totalPriceHT * (1 + TVA_RATE);
 
-    // Prix en centimes pour Stripe
+    // Prix en centimes pour Stripe (toujours TTC)
     const unitPriceInCents = Math.round(unitPriceTTC * 100);
     const totalPriceInCents = Math.round(totalPriceTTC * 100);
 
@@ -112,7 +107,7 @@ export async function calculateCartTotal(cartItems, isPro) {
     totalTTC += totalPriceTTC;
   }
 
-  // Montant total en centimes pour Stripe (TTC pour particuliers, HT pour pros)
+  // Montant total en centimes pour Stripe (TTC pour tous)
   const totalInCents = Math.round(totalTTC * 100);
 
   return {
