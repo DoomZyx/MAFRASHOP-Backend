@@ -34,6 +34,10 @@ const mapUser = (row) => {
           zipCode: row.company_zip_code,
           phone: row.company_phone,
           email: row.company_email,
+          country: row.company_country,
+          vatNumber: row.vat_number,
+          vatStatus: row.vat_status || "none",
+          vatValidationDate: row.vat_validation_date ? row.vat_validation_date.toISOString() : null,
         }
       : null,
     createdAt: row.created_at,
@@ -150,6 +154,10 @@ class User {
       zipCode: "company_zip_code",
       phone: "company_phone",
       email: "company_email",
+      country: "company_country",
+      vatNumber: "vat_number",
+      vatStatus: "vat_status",
+      vatValidationDate: "vat_validation_date",
     };
 
     for (const [key, value] of Object.entries(updateData)) {

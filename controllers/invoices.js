@@ -21,7 +21,10 @@ if (!fs.existsSync(invoicesDir)) {
 async function generateInvoicePDF(invoice, order, items, user) {
   // Calculer les totaux
   const totalHT = items.reduce((sum, item) => sum + item.totalPrice, 0);
-  const TVA_RATE = 0.2; // 20% - appliqué à tous (particuliers et pros)
+  
+  // Déterminer le taux de TVA selon le statut de validation TVA intracommunautaire
+  const hasValidatedVat = user.company?.vatStatus === "validated";
+  const TVA_RATE = hasValidatedVat ? 0 : 0.2; // 0% si TVA UE validée, sinon 20%
   const totalTVA = totalHT * TVA_RATE;
   const totalTTC = totalHT + totalTVA;
 
@@ -50,11 +53,22 @@ async function generateInvoicePDF(invoice, order, items, user) {
   doc.fontSize(12).font("Helvetica-Bold").text("Facturé à:", 50, 160);
   doc.fontSize(10).font("Helvetica");
   doc.text(`${user.firstName} ${user.lastName}`, 50, 180);
-  doc.text(user.email, 50, 195);
-  if (user.address) {
-    doc.text(user.address, 50, 210);
-    if (user.zipCode && user.city) {
-      doc.text(`${user.zipCode} ${user.city}`, 50, 225);
+  if (user.company?.name) {
+    doc.text(user.company.name, 50, 195);
+    doc.text(user.email, 50, 210);
+    if (user.company.siret) {
+      doc.text(`SIRET: ${user.company.siret}`, 50, 225);
+    }
+    if (hasValidatedVat && user.company.vatNumber) {
+      doc.text(`N° TVA: ${user.company.vatNumber}`, 50, 240);
+    }
+  } else {
+    doc.text(user.email, 50, 195);
+    if (user.address) {
+      doc.text(user.address, 50, 210);
+      if (user.zipCode && user.city) {
+        doc.text(`${user.zipCode} ${user.city}`, 50, 225);
+      }
     }
   }
 
@@ -133,7 +147,11 @@ async function generateInvoicePDF(invoice, order, items, user) {
   );
 
   y += 20;
-  doc.text("TVA (20%):", 400, y);
+  if (hasValidatedVat) {
+    doc.text("TVA (0% - Autoliquidation):", 400, y);
+  } else {
+    doc.text("TVA (20%):", 400, y);
+  }
   doc.text(
     new Intl.NumberFormat("fr-FR", {
       style: "currency",
@@ -143,6 +161,21 @@ async function generateInvoicePDF(invoice, order, items, user) {
     y
   );
 
+  const deliveryFee = order.deliveryFee != null ? parseFloat(order.deliveryFee) : 0;
+  if (deliveryFee > 0) {
+    y += 20;
+    doc.fontSize(10).font("Helvetica");
+    doc.text("Frais de livraison (HT):", 400, y);
+    doc.text(
+      new Intl.NumberFormat("fr-FR", {
+        style: "currency",
+        currency: "EUR",
+      }).format(deliveryFee),
+      480,
+      y
+    );
+  }
+
   y += 20;
   doc.fontSize(12).font("Helvetica-Bold");
   doc.text("Total TTC:", 400, y);
@@ -150,10 +183,29 @@ async function generateInvoicePDF(invoice, order, items, user) {
     new Intl.NumberFormat("fr-FR", {
       style: "currency",
       currency: "EUR",
-    }).format(totalTTC),
+    }).format(parseFloat(order.totalAmount)),
     480,
     y
   );
+
+  // Mention TVA intracommunautaire si applicable
+  if (hasValidatedVat && user.company?.vatNumber) {
+    y += 30;
+    doc.fontSize(9).font("Helvetica-Oblique");
+    doc.text(
+      "TVA intracommunautaire - Autoliquidation par le client",
+      50,
+      y,
+      { width: 500, align: "center" }
+    );
+    y += 15;
+    doc.text(
+      `N° TVA intracommunautaire du client: ${user.company.vatNumber}`,
+      50,
+      y,
+      { width: 500, align: "center" }
+    );
+  }
 
   // Informations de paiement
   y += 40;

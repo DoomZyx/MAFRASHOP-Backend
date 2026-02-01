@@ -480,17 +480,27 @@ export const logout = async (request, reply) => {
 export const requestPro = async (request, reply) => {
   try {
     const user = request.user;
-    const { companyName, siret, address, city, zipCode } = request.body;
+    const { companyName, siret, address, city, zipCode, companyCountry, vatNumber } = request.body;
 
-    if (!companyName || !siret) {
+    if (!companyName) {
       return reply.code(400).send({
         success: false,
-        message: "Le nom de l'entreprise et le SIRET sont requis",
+        message: "Le nom de l'entreprise est requis",
       });
     }
 
-    // Vérification du format du SIRET
-    if (siret.length !== 14 || !/^\d+$/.test(siret)) {
+    // SIRET requis uniquement si pas de numéro de TVA intracommunautaire
+    const hasVatNumber = vatNumber && vatNumber.trim().length > 0;
+    
+    if (!hasVatNumber && !siret) {
+      return reply.code(400).send({
+        success: false,
+        message: "Le SIRET est requis (sauf si vous avez un numéro de TVA intracommunautaire)",
+      });
+    }
+
+    // Vérification du format du SIRET (uniquement si fourni)
+    if (siret && (siret.length !== 14 || !/^\d+$/.test(siret))) {
       return reply.code(400).send({
         success: false,
         message: "Le SIRET doit contenir exactement 14 chiffres",
@@ -511,18 +521,69 @@ export const requestPro = async (request, reply) => {
       });
     }
 
+    // Validation du numéro de TVA intracommunautaire si fourni
+    let vatStatus = "none";
+    if (vatNumber && companyCountry) {
+      const cleanVatNumber = vatNumber.replace(/[\s\-\.]/g, "").toUpperCase();
+      const cleanCountryCode = companyCountry.toUpperCase();
+
+      // Vérification du format
+      if (!isValidVatFormat(cleanCountryCode, cleanVatNumber)) {
+        return reply.code(400).send({
+          success: false,
+          message: "Le format du numéro de TVA intracommunautaire est invalide",
+        });
+      }
+
+      // Vérification via VIES (asynchrone, ne bloque pas la réponse)
+      verifyVatNumber(cleanCountryCode, cleanVatNumber)
+        .then((result) => {
+          if (result.valid) {
+            // TVA validée automatiquement
+            User.update(user.id, {
+              "company.vatStatus": "validated",
+              "company.vatValidationDate": new Date().toISOString(),
+            }).catch((err) => console.error("Erreur mise à jour vatStatus:", err));
+          } else if (result.technicalError) {
+            // Erreur technique VIES → validation manuelle
+            User.update(user.id, {
+              "company.vatStatus": "pending_manual",
+            }).catch((err) => console.error("Erreur mise à jour vatStatus:", err));
+          } else {
+            // Numéro invalide
+            User.update(user.id, {
+              "company.vatStatus": "rejected",
+            }).catch((err) => console.error("Erreur mise à jour vatStatus:", err));
+          }
+        })
+        .catch((err) => {
+          console.error("Erreur vérification VIES:", err);
+          // En cas d'erreur → validation manuelle
+          User.update(user.id, {
+            "company.vatStatus": "pending_manual",
+          }).catch((e) => console.error("Erreur mise à jour vatStatus:", e));
+        });
+
+      // Par défaut, on démarre en pending_manual (sera mis à jour par le callback ci-dessus)
+      vatStatus = "pending_manual";
+    }
+
     const updateData = {
       company: {
         ...(user.company || {}),
         name: companyName.trim(),
-        siret: siret,
+        siret: siret || null,
         address: address?.trim() || user.company?.address || "",
         city: city?.trim() || user.company?.city || "",
         zipCode: zipCode?.trim() || user.company?.zipCode || "",
+        country: companyCountry?.trim().toUpperCase() || "FR",
+        vatNumber: vatNumber?.trim().toUpperCase() || null,
+        vatStatus: vatStatus,
+        vatValidationDate: null,
       },
       proStatus: "pending",
       isPro: false,
-      verificationMode: "auto",
+      verificationMode: hasVatNumber ? "manual" : "auto",
       decisionSource: null,
       decisionAt: null,
       reviewedByAdminId: null,
@@ -531,25 +592,26 @@ export const requestPro = async (request, reply) => {
 
     await User.update(user.id, updateData);
 
-    // Préparer les données supplémentaires pour la validation
-    const additionalData = {
-      address: updateData.company.address || undefined,
-      city: updateData.company.city || undefined,
-      zipCode: updateData.company.zipCode || undefined,
-    };
+    // Lancement de la validation INSEE uniquement si SIRET fourni
+    if (siret) {
+      const additionalData = {
+        address: updateData.company.address || undefined,
+        city: updateData.company.city || undefined,
+        zipCode: updateData.company.zipCode || undefined,
+      };
 
-    // Lancement de la validation en asynchrone (ne bloque pas la réponse)
-    validateCompanyAsync(
-      user.id,
-      siret,
-      companyName.trim(),
-      additionalData
-    ).catch((err) => {
-      console.error(
-        `Erreur lors de la validation asynchrone pour l'utilisateur ${user.id}:`,
-        err
-      );
-    });
+      validateCompanyAsync(
+        user.id,
+        siret,
+        companyName.trim(),
+        additionalData
+      ).catch((err) => {
+        console.error(
+          `Erreur lors de la validation asynchrone pour l'utilisateur ${user.id}:`,
+          err
+        );
+      });
+    }
 
     reply.type("application/json");
     return reply.code(200).send({
@@ -628,6 +690,69 @@ export const validateProManually = async (request, reply) => {
  * Autorisé uniquement si pro_status = pending, verification_mode = manual, decision_source IS NULL.
  * Repasse verification_mode = auto et relance validateCompanyAsync.
  */
+/**
+ * Validation manuelle d'un numéro de TVA intracommunautaire (admin uniquement)
+ * Autorisé uniquement si vat_status = "pending_manual"
+ */
+export const validateVatManually = async (request, reply) => {
+  try {
+    const { userId, approved } = request.body;
+    const adminId = request.user.id;
+
+    if (!userId) {
+      return reply.code(400).send({
+        success: false,
+        message: "L'ID de l'utilisateur est requis",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return reply.code(404).send({
+        success: false,
+        message: "Utilisateur introuvable",
+      });
+    }
+
+    if (!user.company || !user.company.vatNumber) {
+      return reply.code(400).send({
+        success: false,
+        message: "Aucun numéro de TVA renseigné pour cet utilisateur",
+      });
+    }
+
+    if (user.company.vatStatus !== "pending_manual") {
+      return reply.code(400).send({
+        success: false,
+        message: `Validation manuelle impossible. Statut actuel: ${user.company.vatStatus}`,
+      });
+    }
+
+    const updatedUser = await User.update(user.id, {
+      "company.vatStatus": approved ? "validated" : "rejected",
+      "company.vatValidationDate": new Date().toISOString(),
+    });
+
+    reply.type("application/json");
+    return reply.code(200).send({
+      success: true,
+      message: approved
+        ? "Numéro de TVA intracommunautaire validé avec succès"
+        : "Numéro de TVA intracommunautaire rejeté",
+      data: {
+        user: User.toJSON(updatedUser),
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la validation manuelle TVA:", error);
+    reply.type("application/json");
+    return reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la validation TVA",
+    });
+  }
+};
+
 export const retryProInsee = async (request, reply) => {
   try {
     const { userId } = request.body;

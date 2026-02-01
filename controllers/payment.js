@@ -3,7 +3,7 @@ import Order from "../models/orders.js";
 import Cart from "../models/cart.js";
 import Invoice from "../models/invoices.js";
 import Delivery from "../models/deliveries.js";
-import { calculateCartTotal } from "../utils/priceCalculation.js";
+import { calculateCartTotal, getDeliveryFee } from "../utils/priceCalculation.js";
 
 if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error("STRIPE_SECRET_KEY n'est pas défini dans les variables d'environnement");
@@ -39,8 +39,8 @@ export const createCheckoutSession = async (request, reply) => {
 
 
     // Calculer les prix côté backend (SEULE source de vérité)
-    // Pour tous (particuliers et pros) : TTC = HT * 1.2 (TVA 20% à la validation du panier)
-    const cartCalculation = await calculateCartTotal(cartItems, isPro);
+    // TVA : 0% si pro UE avec vatStatus="validated", sinon 20%
+    const cartCalculation = await calculateCartTotal(cartItems, isPro, request.user);
 
     if (cartCalculation.items.length === 0) {
       return reply.code(400).send({
@@ -48,6 +48,10 @@ export const createCheckoutSession = async (request, reply) => {
         message: "Aucun produit valide dans le panier",
       });
     }
+
+    const deliveryFee = getDeliveryFee(cartCalculation.totalTTC);
+    const totalWithDelivery = cartCalculation.totalTTC + deliveryFee;
+    const totalInCentsWithDelivery = Math.round(totalWithDelivery * 100);
 
     // Préparer les line items pour Stripe
     // IMPORTANT : 
@@ -74,15 +78,31 @@ export const createCheckoutSession = async (request, reply) => {
       };
     });
 
+    if (deliveryFee > 0) {
+      lineItems.push({
+        price_data: {
+          currency: "eur",
+          product_data: {
+            name: "Frais de livraison",
+            description: "Livraison standard",
+          },
+          unit_amount: Math.round(deliveryFee * 100),
+          tax_behavior: "inclusive",
+        },
+        quantity: 1,
+      });
+    }
+
     // Créer la commande EN BASE AVANT la redirection Stripe
-    // On stocke le snapshot des items et le montant attendu en centimes
-    // Pour tous : totalAmount et expectedAmount sont en TTC (HT + 20% TVA)
+    // On stocke le snapshot des items, les frais de livraison et le montant attendu
+    // totalAmount = sous-total TTC + frais de livraison
     const order = await Order.create({
       userId,
       stripeSessionId: null,
       status: "pending",
-      totalAmount: cartCalculation.totalTTC, // Montant TTC en euros (HT + 20% TVA pour tous)
-      expectedAmount: cartCalculation.totalInCents, // Montant attendu en centimes (TTC)
+      totalAmount: totalWithDelivery,
+      expectedAmount: totalInCentsWithDelivery,
+      deliveryFee,
       isPro,
       shippingAddress: shippingAddress || null,
       items: cartCalculation.items.map(item => ({

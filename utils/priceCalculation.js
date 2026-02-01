@@ -1,5 +1,21 @@
 import Product from "../models/products.js";
 
+/** Seuil en euros TTC au-delà duquel la livraison est gratuite */
+export const FREE_SHIPPING_THRESHOLD = 80;
+
+/** Frais de livraison en euros si panier < FREE_SHIPPING_THRESHOLD */
+export const DELIVERY_FEE = 6.5;
+
+/**
+ * Calcule les frais de livraison selon le montant du panier TTC
+ * @param {number} subtotalTTC - Sous-total panier TTC en euros
+ * @returns {number} Frais de livraison en euros (0 si subtotalTTC >= FREE_SHIPPING_THRESHOLD)
+ */
+export function getDeliveryFee(subtotalTTC) {
+  if (subtotalTTC >= FREE_SHIPPING_THRESHOLD) return 0;
+  return DELIVERY_FEE;
+}
+
 /**
  * Fonction pure de calcul des prix pour un produit
  * Cette fonction est la SEULE source de vérité pour le calcul des prix
@@ -52,25 +68,33 @@ export async function calculateProductPrice(product, quantity, isPro) {
 }
 
 /**
- * Calcule le prix total pour un panier complet
- * Pour les particuliers : calcule le TTC (HT * 1.2) côté backend
- * Pour les pros : HT + TVA 20% = TTC (la TVA est ajoutée à la validation du panier)
- *
+ * Calcule le prix total pour un panier complet avec gestion TVA intracommunautaire
+ * 
+ * Règles TVA :
+ * - Si user.company.vatStatus === "validated" → TVA 0% (pros UE avec n° TVA validé)
+ * - Sinon → TVA 20% (particuliers et pros sans TVA validée)
+ * 
  * @param {Array} cartItems - Les items du panier
  * @param {boolean} isPro - Si l'utilisateur est un professionnel
- * @returns {Object} { items: Array, totalHT: number, totalTTC: number, totalInCents: number }
+ * @param {Object} user - Objet utilisateur complet (pour vérifier vatStatus)
+ * @returns {Object} { items: Array, totalHT: number, totalTTC: number, totalInCents: number, vatRate: number }
  */
-export async function calculateCartTotal(cartItems, isPro) {
+export async function calculateCartTotal(cartItems, isPro, user = null) {
   if (!cartItems || cartItems.length === 0) {
     return {
       items: [],
       totalHT: 0,
       totalTTC: 0,
       totalInCents: 0,
+      vatRate: 0,
     };
   }
 
-  const TVA_RATE = 0.2; // 20% - France
+  // Déterminer le taux de TVA selon le statut de validation TVA intracommunautaire
+  // RÈGLE CRITIQUE : TVA 0% UNIQUEMENT si vatStatus === "validated"
+  const hasValidatedVat = user?.company?.vatStatus === "validated";
+  const TVA_RATE = hasValidatedVat ? 0 : 0.2; // 0% si TVA UE validée, sinon 20%
+
   const calculatedItems = [];
   let totalHT = 0;
   let totalTTC = 0;
@@ -115,6 +139,7 @@ export async function calculateCartTotal(cartItems, isPro) {
     totalHT,
     totalTTC,
     totalInCents,
+    vatRate: TVA_RATE, // Retourner le taux appliqué pour audit/affichage
   };
 }
 

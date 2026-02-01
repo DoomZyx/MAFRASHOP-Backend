@@ -49,9 +49,9 @@ export const getAllStats = async (request, reply) => {
     );
 
     const revenue = {
-      total: parseFloat(revenueResult.rows[0].total_revenue || 0) / 100, // Convertir de centimes en euros
+      total: parseFloat(revenueResult.rows[0].total_revenue || 0), // Convertir de centimes en euros
       totalOrders: parseInt(revenueResult.rows[0].total_orders || 0, 10),
-      avgOrderValue: parseFloat(revenueResult.rows[0].avg_order_value || 0) / 100,
+      avgOrderValue: parseFloat(revenueResult.rows[0].avg_order_value || 0),
     };
 
     // Chiffre d'affaires par période (derniers 12 mois)

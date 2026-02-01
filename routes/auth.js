@@ -8,6 +8,7 @@ import {
   updateCompanyProfile,
   requestPro,
   validateProManually,
+  validateVatManually,
   retryProInsee,
   testProRequest,
   adminLogin,
@@ -75,6 +76,13 @@ export default async function authRoutes(fastify, options) {
     "/api/auth/pro/retry-insee",
     { preHandler: [verifyToken, isAdmin] },
     retryProInsee
+  );
+
+  // Validation manuelle d'un numéro de TVA intracommunautaire (admin uniquement)
+  fastify.post(
+    "/api/auth/admin/validate-vat",
+    { preHandler: [verifyToken, isAdmin] },
+    validateVatManually
   );
 
   // Admin routes
