@@ -78,6 +78,20 @@ class Invoice {
     return result.rows.map(mapInvoice);
   }
 
+  // Trouver toutes les factures des commandes payées pour un mois/année donnés (date de création de la commande)
+  static async findByMonthYear(month, year) {
+    const result = await pool.query(
+      `SELECT i.* FROM invoices i
+       INNER JOIN orders o ON i.order_id = o.id
+       WHERE o.status = $1
+         AND EXTRACT(MONTH FROM o.created_at) = $2
+         AND EXTRACT(YEAR FROM o.created_at) = $3
+       ORDER BY i.invoice_number`,
+      ["paid", month, year]
+    );
+    return result.rows.map(mapInvoice);
+  }
+
   // Mettre à jour le chemin du PDF
   static async updatePdfPath(id, pdfPath) {
     const result = await pool.query(

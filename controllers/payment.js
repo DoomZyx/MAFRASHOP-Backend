@@ -52,6 +52,8 @@ export const createCheckoutSession = async (request, reply) => {
     const deliveryFee = getDeliveryFee(cartCalculation.totalTTC);
     const totalWithDelivery = cartCalculation.totalTTC + deliveryFee;
     const totalInCentsWithDelivery = Math.round(totalWithDelivery * 100);
+    const vatRate = cartCalculation.vatRate ?? 0.2;
+    const totalAmountHT = cartCalculation.totalHT + deliveryFee / (1 + vatRate);
 
     // Préparer les line items pour Stripe
     // IMPORTANT : 
@@ -95,12 +97,13 @@ export const createCheckoutSession = async (request, reply) => {
 
     // Créer la commande EN BASE AVANT la redirection Stripe
     // On stocke le snapshot des items, les frais de livraison et le montant attendu
-    // totalAmount = sous-total TTC + frais de livraison
+    // totalAmount = sous-total TTC + frais de livraison ; totalAmountHT = HT pour stats exactes
     const order = await Order.create({
       userId,
       stripeSessionId: null,
       status: "pending",
       totalAmount: totalWithDelivery,
+      totalAmountHT,
       expectedAmount: totalInCentsWithDelivery,
       deliveryFee,
       isPro,

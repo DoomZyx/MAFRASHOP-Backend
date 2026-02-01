@@ -10,6 +10,7 @@ const mapOrder = (row) => {
     stripeSessionId: row.stripe_session_id,
     status: row.status,
     totalAmount: parseFloat(row.total_amount),
+    totalAmountHT: row.total_amount_ht != null ? parseFloat(row.total_amount_ht) : null,
     expectedAmount: row.expected_amount ? parseInt(row.expected_amount, 10) : null,
     deliveryFee: row.delivery_fee != null ? parseFloat(row.delivery_fee) : 0,
     isPro: row.is_pro || false,
@@ -47,6 +48,7 @@ class Order {
       stripeSessionId,
       status = "pending",
       totalAmount,
+      totalAmountHT = null,
       expectedAmount,
       deliveryFee = 0,
       shippingAddress,
@@ -62,8 +64,8 @@ class Order {
       const orderResult = await client.query(
         `INSERT INTO orders (
           user_id, stripe_payment_intent_id, stripe_session_id, status,
-          total_amount, expected_amount, delivery_fee, is_pro, shipping_address, billing_address, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          total_amount, total_amount_ht, expected_amount, delivery_fee, is_pro, shipping_address, billing_address, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING *`,
         [
           userId,
@@ -71,6 +73,7 @@ class Order {
           stripeSessionId,
           status,
           totalAmount,
+          totalAmountHT,
           expectedAmount,
           deliveryFee,
           orderData.isPro || false,

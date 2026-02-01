@@ -4,6 +4,50 @@ import User from "../../models/user.js";
 import pool from "../../db.js";
 
 /**
+ * Statistiques dashboard : commandes du mois en cours, livraisons en attente (non livrées)
+ */
+export const getDashboardStats = async (request, reply) => {
+  try {
+    if (request.user.role !== "admin") {
+      return reply.code(403).send({
+        success: false,
+        message: "Accès réservé aux administrateurs",
+      });
+    }
+
+    const ordersResult = await pool.query(
+      `SELECT COUNT(*) as count FROM orders o
+       WHERE EXTRACT(MONTH FROM o.created_at) = EXTRACT(MONTH FROM CURRENT_DATE)
+         AND EXTRACT(YEAR FROM o.created_at) = EXTRACT(YEAR FROM CURRENT_DATE)`
+    );
+    const ordersThisMonth = parseInt(ordersResult.rows[0].count || 0, 10);
+
+    const deliveriesResult = await pool.query(
+      `SELECT COUNT(*) as count FROM deliveries d
+       WHERE d.status NOT IN ('delivered', 'failed')`
+    );
+    const pendingDeliveries = parseInt(deliveriesResult.rows[0].count || 0, 10);
+
+    reply.type("application/json");
+    return reply.send({
+      success: true,
+      data: {
+        ordersThisMonth,
+        pendingDeliveries,
+      },
+    });
+  } catch (error) {
+    console.error("Erreur stats dashboard:", error);
+    reply.type("application/json");
+    return reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la récupération des statistiques dashboard",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+};
+
+/**
  * Récupérer toutes les statistiques
  */
 export const getAllStats = async (request, reply) => {
@@ -37,28 +81,30 @@ export const getAllStats = async (request, reply) => {
       ? `WHERE ${periodCondition} AND o.status = 'paid'`
       : "WHERE o.status = 'paid'";
 
-    // Chiffre d'affaires total
+    // Chiffre d'affaires total (HT : montant exact par commande, fallback TTC/1.2 pour anciennes commandes)
     const revenueResult = await pool.query(
       `SELECT 
-        COALESCE(SUM(o.total_amount), 0) as total_revenue,
-        COUNT(*) as total_orders,
-        COALESCE(AVG(o.total_amount), 0) as avg_order_value
+        COALESCE(SUM(COALESCE(o.total_amount_ht, o.total_amount / 1.2)), 0) as total_revenue_ht,
+        COUNT(*) as total_orders
       FROM orders o
       ${whereClause}`,
       periodParams
     );
 
+    const totalRevenueHT = parseFloat(revenueResult.rows[0].total_revenue_ht || 0);
+    const totalOrders = parseInt(revenueResult.rows[0].total_orders || 0, 10);
+
     const revenue = {
-      total: parseFloat(revenueResult.rows[0].total_revenue || 0), // Convertir de centimes en euros
-      totalOrders: parseInt(revenueResult.rows[0].total_orders || 0, 10),
-      avgOrderValue: parseFloat(revenueResult.rows[0].avg_order_value || 0),
+      total: totalRevenueHT,
+      totalOrders,
+      avgOrderValue: totalOrders > 0 ? totalRevenueHT / totalOrders : 0,
     };
 
-    // Chiffre d'affaires par période (derniers 12 mois)
+    // Chiffre d'affaires par période (derniers 12 mois) en HT
     const revenueByPeriodResult = await pool.query(
       `SELECT 
         DATE_TRUNC('month', o.created_at) as month,
-        COALESCE(SUM(o.total_amount), 0) as revenue,
+        COALESCE(SUM(COALESCE(o.total_amount_ht, o.total_amount / 1.2)), 0) as revenue,
         COUNT(*) as orders_count
       FROM orders o
       WHERE o.status = 'paid'
@@ -123,7 +169,7 @@ export const getAllStats = async (request, reply) => {
     const ordersByStatus = ordersByStatusResult.rows.map((row) => ({
       status: row.status,
       count: parseInt(row.count || 0, 10),
-      totalAmount: parseFloat(row.total_amount || 0) / 100,
+      totalAmount: parseFloat(row.total_amount || 0),
     }));
 
     // Clients actifs vs nouveaux

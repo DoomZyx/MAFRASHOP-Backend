@@ -17,8 +17,9 @@ if (!fs.existsSync(invoicesDir)) {
 
 /**
  * Fonction utilitaire pour générer le PDF (réutilisable)
+ * Exportée pour l'export ZIP admin (factures par mois/année).
  */
-async function generateInvoicePDF(invoice, order, items, user) {
+export async function generateInvoicePDF(invoice, order, items, user) {
   // Calculer les totaux
   const totalHT = items.reduce((sum, item) => sum + item.totalPrice, 0);
   
@@ -295,7 +296,7 @@ export const generateInvoice = async (request, reply) => {
       data: {
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
-        pdfPath: pdfFileName,
+        pdfPath: path.basename(pdfPath),
       },
     });
   } catch (error) {

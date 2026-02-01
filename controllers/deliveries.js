@@ -1,5 +1,6 @@
 import Order from "../models/orders.js";
 import Delivery from "../models/deliveries.js";
+import User from "../models/user.js";
 
 /**
  * Récupère toutes les livraisons d'un utilisateur
@@ -137,11 +138,10 @@ export const getDeliveryByOrderId = async (request, reply) => {
 };
 
 /**
- * Récupère toutes les livraisons (admin seulement)
+ * Récupère toutes les livraisons avec commande complète (adresse, client) pour le livreur (admin seulement)
  */
 export const getAllDeliveries = async (request, reply) => {
   try {
-    // Vérifier que l'utilisateur est admin
     if (request.user.role !== "admin") {
       return reply.code(403).send({
         success: false,
@@ -150,12 +150,45 @@ export const getAllDeliveries = async (request, reply) => {
     }
 
     const deliveries = await Delivery.findAllWithOrder();
+    const deliveriesWithOrder = await Promise.all(
+      deliveries.map(async (d) => {
+        const order = await Order.findByIdWithUser(d.orderId);
+        let deliveryAddress = null;
+        let clientPhone = null;
+        if (order?.userId) {
+          const user = await User.findById(order.userId);
+          if (user) {
+            clientPhone = user.phone || (user.company?.phone ?? null);
+            if (order.isPro && user.company) {
+              deliveryAddress = {
+                name: user.company.name || `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+                line1: user.company.address || "",
+                line2: null,
+                postal_code: user.company.zipCode || "",
+                city: user.company.city || "",
+                country: user.company.country || "France",
+              };
+            } else {
+              deliveryAddress = {
+                name: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
+                line1: user.address || "",
+                line2: null,
+                postal_code: user.zipCode || "",
+                city: user.city || "",
+                country: "France",
+              };
+            }
+          }
+        }
+        return { ...d, order: order || null, deliveryAddress, clientPhone };
+      })
+    );
 
     reply.type("application/json");
     return reply.send({
       success: true,
       data: {
-        deliveries,
+        deliveries: deliveriesWithOrder,
       },
     });
   } catch (error) {
@@ -169,11 +202,11 @@ export const getAllDeliveries = async (request, reply) => {
 };
 
 /**
- * Met à jour le statut d'une livraison (admin seulement)
+ * Met à jour le statut d'une livraison (admin seulement).
+ * Si statut = "delivered", enregistre aussi la date de livraison réelle (aujourd'hui).
  */
 export const updateDeliveryStatus = async (request, reply) => {
   try {
-    // Vérifier que l'utilisateur est admin
     if (request.user.role !== "admin") {
       return reply.code(403).send({
         success: false,
@@ -192,7 +225,13 @@ export const updateDeliveryStatus = async (request, reply) => {
       });
     }
 
-    const delivery = await Delivery.updateStatus(id, status);
+    let delivery;
+    if (status === "delivered") {
+      const today = new Date().toISOString().split("T")[0];
+      delivery = await Delivery.updateActualDeliveryDate(id, today);
+    } else {
+      delivery = await Delivery.updateStatus(id, status);
+    }
 
     reply.type("application/json");
     return reply.send({
