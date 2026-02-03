@@ -1,7 +1,14 @@
-// Charger les variables d'environnement depuis .env
+// Chargement des variables d'environnement selon NODE_ENV
+// .env.preprod et .env.prod sont présents uniquement sur le VPS, jamais dans le repo
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
-// Charger .env (dotenv cherche automatiquement .env à la racine)
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const env = process.env.NODE_ENV || "development";
 
-console.log("Variables d'environnement chargées depuis .env");
+let envFile = ".env";
+if (env === "preprod") envFile = ".env.preprod";
+else if (env === "production") envFile = ".env.prod";
+
+dotenv.config({ path: path.resolve(__dirname, envFile) });

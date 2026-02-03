@@ -1,0 +1,54 @@
+# Repo BACKEND uniquement. develop -> préprod, main -> prod
+
+name: Deploy Backend
+
+on:
+  push:
+    branches: [develop, main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set deploy env
+        id: env
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            echo "REMOTE_PATH=/var/www/preprod/backend" >> $GITHUB_OUTPUT
+            echo "SERVICE_NAME=api-preprod" >> $GITHUB_OUTPUT
+          else
+            echo "REMOTE_PATH=/var/www/prod/backend" >> $GITHUB_OUTPUT
+            echo "SERVICE_NAME=api-prod" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Deploy backend
+        env:
+          REMOTE_PATH: ${{ steps.env.outputs.REMOTE_PATH }}
+        run: |
+          rsync -avz -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            --exclude 'node_modules' \
+            --exclude '.env' \
+            --exclude '.env.*' \
+            --exclude 'invoices/*.pdf' \
+            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$REMOTE_PATH/
+
+      - name: Install and restart
+        env:
+          REMOTE_PATH: ${{ steps.env.outputs.REMOTE_PATH }}
+          SERVICE_NAME: ${{ steps.env.outputs.SERVICE_NAME }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "cd $REMOTE_PATH && pnpm install --frozen-lockfile --prod && sudo systemctl restart $SERVICE_NAME"

@@ -1,0 +1,19 @@
+[Unit]
+Description=MAFRASHOP API préprod (Fastify)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/preprod/backend
+Environment=NODE_ENV=preprod
+EnvironmentFile=/var/www/preprod/backend/.env.preprod
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

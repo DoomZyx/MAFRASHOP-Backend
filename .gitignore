@@ -3,6 +3,7 @@ node_modules
 .env.dev
 .env.test
 .env.prod
+.env.preprod
 .env.local
 .env.*.local
 MafraProducts_cleaned.csv
