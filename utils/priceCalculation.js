@@ -4,7 +4,7 @@ import Product from "../models/products.js";
 export const FREE_SHIPPING_THRESHOLD = 80;
 
 /** Frais de livraison en euros si panier < FREE_SHIPPING_THRESHOLD */
-export const DELIVERY_FEE = 6.5;
+export const DELIVERY_FEE = 7.5;
 
 /**
  * Calcule les frais de livraison selon le montant du panier TTC

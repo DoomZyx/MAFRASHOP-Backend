@@ -38,57 +38,82 @@ export async function generateInvoicePDF(invoice, order, items, user) {
 
   // En-tête
   doc.fontSize(20).font("Helvetica-Bold").text("FACTURE", 50, 50);
-  doc.fontSize(10).font("Helvetica").text(`N° ${invoice.invoiceNumber}`, 50, 75);
-  doc.text(`Date: ${new Date(order.createdAt).toLocaleDateString("fr-FR")}`, 50, 90);
+  doc.fontSize(10).font("Helvetica");
+  doc.text(`N° Facture: ${invoice.invoiceNumber}`, 50, 70);
+  doc.text(`N° Commande: ${order.id}`, 50, 82);
+  doc.text(`Date: ${new Date(order.createdAt).toLocaleDateString("fr-FR")}`, 50, 94);
 
   // Informations entreprise (à personnaliser)
   doc.fontSize(10).font("Helvetica-Bold").text("MAFRASHOP", 400, 50);
   doc.fontSize(9).font("Helvetica");
-  doc.text("Adresse de l'entreprise", 400, 70);
-  doc.text("Code postal, Ville", 400, 85);
-  doc.text("France", 400, 100);
-  doc.text("SIRET: [À compléter]", 400, 115);
-  doc.text("TVA: [À compléter]", 400, 130);
+  doc.text("20 rue des ponts", 400, 65);
+  doc.text("57300, Mondelange", 400, 77);
+  doc.text("France", 400, 89);
+  doc.text("SIRET: [À compléter]", 400, 101);
+  doc.text("TVA: [À compléter]", 400, 113);
 
   // Informations client
-  doc.fontSize(12).font("Helvetica-Bold").text("Facturé à:", 50, 160);
+  let clientY = 130;
+  doc.fontSize(12).font("Helvetica-Bold").text("Facturé à:", 50, clientY);
   doc.fontSize(10).font("Helvetica");
-  doc.text(`${user.firstName} ${user.lastName}`, 50, 180);
+  clientY += 15;
+  doc.text(`${user.firstName} ${user.lastName}`, 50, clientY);
   if (user.company?.name) {
-    doc.text(user.company.name, 50, 195);
-    doc.text(user.email, 50, 210);
+    clientY += 12;
+    doc.text(user.company.name, 50, clientY);
+    clientY += 12;
+    doc.text(user.email, 50, clientY);
     if (user.company.siret) {
-      doc.text(`SIRET: ${user.company.siret}`, 50, 225);
+      clientY += 12;
+      doc.text(`SIRET: ${user.company.siret}`, 50, clientY);
     }
     if (hasValidatedVat && user.company.vatNumber) {
-      doc.text(`N° TVA: ${user.company.vatNumber}`, 50, 240);
+      clientY += 12;
+      doc.text(`N° TVA: ${user.company.vatNumber}`, 50, clientY);
     }
   } else {
-    doc.text(user.email, 50, 195);
+    clientY += 12;
+    doc.text(user.email, 50, clientY);
     if (user.address) {
-      doc.text(user.address, 50, 210);
+      clientY += 12;
+      doc.text(user.address, 50, clientY);
       if (user.zipCode && user.city) {
-        doc.text(`${user.zipCode} ${user.city}`, 50, 225);
+        clientY += 12;
+        doc.text(`${user.zipCode} ${user.city}`, 50, clientY);
       }
     }
   }
 
   // Adresse de livraison si différente
   if (order.shippingAddress) {
-    doc.fontSize(12).font("Helvetica-Bold").text("Livré à:", 300, 160);
+    let shippingY = 130;
+    doc.fontSize(12).font("Helvetica-Bold").text("Livré à:", 300, shippingY);
     doc.fontSize(10).font("Helvetica");
     const shipping = order.shippingAddress;
-    if (shipping.name) doc.text(shipping.name, 300, 180);
-    if (shipping.line1) doc.text(shipping.line1, 300, 195);
-    if (shipping.line2) doc.text(shipping.line2, 300, 210);
-    if (shipping.postal_code && shipping.city) {
-      doc.text(`${shipping.postal_code} ${shipping.city}`, 300, 225);
+    shippingY += 15;
+    if (shipping.name) {
+      doc.text(shipping.name, 300, shippingY);
+      shippingY += 12;
     }
-    if (shipping.country) doc.text(shipping.country, 300, 240);
+    if (shipping.line1) {
+      doc.text(shipping.line1, 300, shippingY);
+      shippingY += 12;
+    }
+    if (shipping.line2) {
+      doc.text(shipping.line2, 300, shippingY);
+      shippingY += 12;
+    }
+    if (shipping.postal_code && shipping.city) {
+      doc.text(`${shipping.postal_code} ${shipping.city}`, 300, shippingY);
+      shippingY += 12;
+    }
+    if (shipping.country) {
+      doc.text(shipping.country, 300, shippingY);
+    }
   }
 
   // Tableau des items
-  let y = 280;
+  let y = Math.max(clientY, order.shippingAddress ? 200 : clientY) + 20;
   doc.fontSize(10).font("Helvetica-Bold");
   doc.text("Description", 50, y);
   doc.text("Qté", 350, y);
@@ -107,7 +132,8 @@ export async function generateInvoicePDF(invoice, order, items, user) {
     
     // Gérer le retour à la ligne si description trop longue
     const maxWidth = 280;
-    const lines = doc.heightOfString(description, { width: maxWidth });
+    const textHeight = doc.heightOfString(description, { width: maxWidth });
+    const lineHeight = Math.max(14, textHeight);
     
     doc.text(description, 50, y, { width: maxWidth });
     doc.text(item.quantity.toString(), 350, y);
@@ -128,12 +154,12 @@ export async function generateInvoicePDF(invoice, order, items, user) {
       y
     );
     
-    y += Math.max(20, lines * 15);
+    y += lineHeight;
   });
 
-  y += 10;
+  y += 8;
   doc.moveTo(50, y).lineTo(550, y).stroke();
-  y += 20;
+  y += 12;
 
   // Totaux
   doc.fontSize(10).font("Helvetica");
@@ -147,7 +173,7 @@ export async function generateInvoicePDF(invoice, order, items, user) {
     y
   );
 
-  y += 20;
+  y += 14;
   if (hasValidatedVat) {
     doc.text("TVA (0% - Autoliquidation):", 400, y);
   } else {
@@ -164,9 +190,9 @@ export async function generateInvoicePDF(invoice, order, items, user) {
 
   const deliveryFee = order.deliveryFee != null ? parseFloat(order.deliveryFee) : 0;
   if (deliveryFee > 0) {
-    y += 20;
+    y += 14;
     doc.fontSize(10).font("Helvetica");
-    doc.text("Frais de livraison (HT):", 400, y);
+    doc.text("Frais de livraison:", 400, y);
     doc.text(
       new Intl.NumberFormat("fr-FR", {
         style: "currency",
@@ -177,7 +203,7 @@ export async function generateInvoicePDF(invoice, order, items, user) {
     );
   }
 
-  y += 20;
+  y += 14;
   doc.fontSize(12).font("Helvetica-Bold");
   doc.text("Total TTC:", 400, y);
   doc.text(
@@ -191,7 +217,7 @@ export async function generateInvoicePDF(invoice, order, items, user) {
 
   // Mention TVA intracommunautaire si applicable
   if (hasValidatedVat && user.company?.vatNumber) {
-    y += 30;
+    y += 20;
     doc.fontSize(9).font("Helvetica-Oblique");
     doc.text(
       "TVA intracommunautaire - Autoliquidation par le client",
@@ -199,7 +225,7 @@ export async function generateInvoicePDF(invoice, order, items, user) {
       y,
       { width: 500, align: "center" }
     );
-    y += 15;
+    y += 12;
     doc.text(
       `N° TVA intracommunautaire du client: ${user.company.vatNumber}`,
       50,
@@ -209,11 +235,11 @@ export async function generateInvoicePDF(invoice, order, items, user) {
   }
 
   // Informations de paiement
-  y += 40;
+  y += 25;
   doc.fontSize(9).font("Helvetica");
   doc.text("Paiement effectué via Stripe", 50, y);
   if (order.stripePaymentIntentId) {
-    doc.text(`Payment Intent: ${order.stripePaymentIntentId}`, 50, y + 15);
+    doc.text(`Payment Intent: ${order.stripePaymentIntentId}`, 50, y + 12);
   }
 
   // Pied de page
@@ -275,6 +301,15 @@ export const generateInvoice = async (request, reply) => {
     let invoice = await Invoice.findByOrderId(orderId);
     if (!invoice) {
       invoice = await Invoice.createFromOrder(orderId);
+    }
+
+    // Supprimer l'ancien PDF s'il existe pour forcer la régénération avec le nouveau format
+    if (invoice.pdfPath && fs.existsSync(invoice.pdfPath)) {
+      try {
+        fs.unlinkSync(invoice.pdfPath);
+      } catch (error) {
+        console.warn("Impossible de supprimer l'ancien PDF:", error.message);
+      }
     }
 
     // Récupérer les items de la commande
@@ -342,14 +377,21 @@ export const downloadInvoice = async (request, reply) => {
       invoice = await Invoice.createFromOrder(orderId);
     }
 
-    // Si le PDF n'existe pas, le générer
-    if (!invoice.pdfPath || !fs.existsSync(invoice.pdfPath)) {
-      const items = await Order.findOrderItems(orderId);
-      const user = await User.findById(order.userId);
-      const pdfPath = await generateInvoicePDF(invoice, order, items, user);
-      await Invoice.updatePdfPath(invoice.id, pdfPath);
-      invoice.pdfPath = pdfPath;
+    // Supprimer l'ancien PDF s'il existe pour forcer la régénération avec le nouveau format
+    if (invoice.pdfPath && fs.existsSync(invoice.pdfPath)) {
+      try {
+        fs.unlinkSync(invoice.pdfPath);
+      } catch (error) {
+        console.warn("Impossible de supprimer l'ancien PDF:", error.message);
+      }
     }
+
+    // Toujours régénérer le PDF pour s'assurer qu'il est à jour
+    const items = await Order.findOrderItems(orderId);
+    const user = await User.findById(order.userId);
+    const pdfPath = await generateInvoicePDF(invoice, order, items, user);
+    await Invoice.updatePdfPath(invoice.id, pdfPath);
+    invoice.pdfPath = pdfPath;
 
     // Envoyer le fichier
     const pdfFileName = path.basename(invoice.pdfPath);

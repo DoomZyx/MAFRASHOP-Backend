@@ -15,6 +15,7 @@ import adminStockRoutes from "./routes/admin/stock.js";
 import adminStatsRoutes from "./routes/admin/stats.js";
 import adminOrdersRoutes from "./routes/admin/orders.js";
 import adminInvoicesRoutes from "./routes/admin/invoices.js";
+import contactRoutes from "./routes/contact.js";
 import { sendToUser } from "./routes/websocket.js";
 
 export { sendToUser };
@@ -105,6 +106,7 @@ fastify.register(adminStockRoutes);
 fastify.register(adminStatsRoutes);
 fastify.register(adminOrdersRoutes);
 fastify.register(adminInvoicesRoutes);
+fastify.register(contactRoutes);
 
 // Initialiser la connexion à la base de données
 await connectDB();

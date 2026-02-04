@@ -3,6 +3,9 @@ import Order from "../models/orders.js";
 import Cart from "../models/cart.js";
 import Invoice from "../models/invoices.js";
 import Delivery from "../models/deliveries.js";
+import Product from "../models/products.js";
+import StripeWebhookEvent from "../models/stripeWebhookEvents.js";
+import pool from "../db.js";
 import { calculateCartTotal, getDeliveryFee } from "../utils/priceCalculation.js";
 
 if (!process.env.STRIPE_SECRET_KEY) {
@@ -21,11 +24,148 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
  * 4. Stripe gère la TVA automatiquement (automatic_tax)
  * 5. Le webhook vérifie la cohérence des montants
  */
+/**
+ * Valide le format d'un sessionId Stripe
+ */
+const validateStripeSessionId = (sessionId) => {
+  if (!sessionId || typeof sessionId !== "string") {
+    return false;
+  }
+  // Format Stripe Checkout Session: cs_test_... ou cs_live_...
+  return /^cs_(test|live)_[a-zA-Z0-9]{24,}$/.test(sessionId);
+};
+
+/**
+ * Valide et sanitize l'adresse de livraison
+ * Protection contre injection, validation métier, pays autorisés
+ */
+const validateShippingAddress = (address) => {
+  if (!address) return null;
+
+  // Vérifier que c'est un objet
+  if (typeof address !== "object" || Array.isArray(address)) {
+    return null;
+  }
+
+  // Pays autorisés (selon shipping_address_collection Stripe)
+  const ALLOWED_COUNTRIES = ["FR", "BE", "CH", "LU"];
+
+  // Fonction pour nettoyer et valider les chaînes (protection Unicode invisible)
+  const sanitizeString = (value, maxLength) => {
+    if (typeof value !== "string") return null;
+    // Supprimer les caractères Unicode invisibles et contrôles
+    const cleaned = value.replace(/[\u200B-\u200D\uFEFF\u00AD]/g, "").trim();
+    return cleaned.substring(0, maxLength) || null;
+  };
+
+  // Structure attendue et validation
+  const sanitized = {
+    firstName: sanitizeString(address.firstName, 100),
+    lastName: sanitizeString(address.lastName, 100),
+    address: sanitizeString(address.address, 255),
+    city: sanitizeString(address.city, 100),
+    zipCode: sanitizeString(address.zipCode, 20),
+    country: sanitizeString(address.country, 100),
+    phone: sanitizeString(address.phone, 20),
+  };
+
+  // Vérifier les champs requis minimum
+  if (!sanitized.address || !sanitized.city || !sanitized.zipCode) {
+    return null;
+  }
+
+  // Validation format postal selon pays
+  if (sanitized.country === "FR" && sanitized.zipCode) {
+    // Code postal français : 5 chiffres
+    if (!/^\d{5}$/.test(sanitized.zipCode)) {
+      return null;
+    }
+  } else if (sanitized.country === "BE" && sanitized.zipCode) {
+    // Code postal belge : 4 chiffres
+    if (!/^\d{4}$/.test(sanitized.zipCode)) {
+      return null;
+    }
+  } else if (sanitized.country === "CH" && sanitized.zipCode) {
+    // Code postal suisse : 4 chiffres
+    if (!/^\d{4}$/.test(sanitized.zipCode)) {
+      return null;
+    }
+  } else if (sanitized.country === "LU" && sanitized.zipCode) {
+    // Code postal luxembourgeois : 4 chiffres
+    if (!/^\d{4}$/.test(sanitized.zipCode)) {
+      return null;
+    }
+  }
+
+  // Validation pays autorisé
+  if (sanitized.country && !ALLOWED_COUNTRIES.includes(sanitized.country.toUpperCase())) {
+    return null;
+  }
+
+  // Normaliser le pays en majuscules
+  if (sanitized.country) {
+    sanitized.country = sanitized.country.toUpperCase();
+  }
+
+  return sanitized;
+};
+
 export const createCheckoutSession = async (request, reply) => {
   try {
     const userId = request.user.id;
-    const { shippingAddress } = request.body;
+    const { shippingAddress: rawShippingAddress } = request.body;
     const isPro = request.user.isPro || false;
+
+    // IDEMPOTENCE : Vérifier s'il existe déjà une commande pending pour cet utilisateur
+    // Évite la création de multiples sessions pour le même panier
+    const existingPendingOrders = await Order.findPendingByUserId(userId);
+    if (existingPendingOrders.length > 0) {
+      // Si une commande pending existe avec une session Stripe, réutiliser la session
+      const orderWithSession = existingPendingOrders.find(
+        (o) => o && o.stripeSessionId !== null
+      );
+      
+      if (orderWithSession && orderWithSession.stripeSessionId) {
+        try {
+          // Vérifier que la session Stripe existe toujours et est valide
+          const existingSession = await stripe.checkout.sessions.retrieve(
+            orderWithSession.stripeSessionId
+          );
+          
+          // Si la session est toujours ouverte (expired_at dans le futur ou null)
+          if (
+            !existingSession.expires_at ||
+            existingSession.expires_at * 1000 > Date.now()
+          ) {
+            return reply.send({
+              success: true,
+              data: {
+                sessionId: existingSession.id,
+                url: existingSession.url,
+                orderId: orderWithSession.id,
+                reused: true,
+              },
+            });
+          }
+        } catch (stripeError) {
+          // Session invalide ou expirée, on continue pour créer une nouvelle
+          console.warn(
+            `Session Stripe ${orderWithSession.stripeSessionId} invalide, création nouvelle session`
+          );
+        }
+      }
+      
+      // Si pas de session valide, annuler les commandes pending orphelines
+      // (elles seront recréées avec la nouvelle session)
+      for (const pendingOrder of existingPendingOrders) {
+        if (pendingOrder && !pendingOrder.stripeSessionId) {
+          await Order.updateStatus(pendingOrder.id, "cancelled");
+        }
+      }
+    }
+
+    // Valider et sanitizer l'adresse de livraison
+    const shippingAddress = validateShippingAddress(rawShippingAddress);
 
     // Récupérer le panier
     const cartItems = await Cart.findByUserId(userId);
@@ -37,6 +177,40 @@ export const createCheckoutSession = async (request, reply) => {
       });
     }
 
+    // VÉRIFICATION STOCK FINALE : Vérifier que tous les produits ont un stock suffisant
+    // (protection contre changement de stock entre ajout au panier et checkout)
+    const stockIssues = [];
+    for (const cartItem of cartItems) {
+      if (!cartItem || !cartItem.productId) continue;
+      
+      const product = await Product.findById(cartItem.productId.id);
+      if (!product) {
+        stockIssues.push({
+          productId: cartItem.productId.id,
+          productName: cartItem.productId.nom || "Produit inconnu",
+          reason: "Produit introuvable",
+        });
+        continue;
+      }
+
+      if (product.stockQuantity < cartItem.quantity) {
+        stockIssues.push({
+          productId: cartItem.productId.id,
+          productName: cartItem.productId.nom || "Produit inconnu",
+          availableStock: product.stockQuantity,
+          requestedQuantity: cartItem.quantity,
+          reason: "Stock insuffisant",
+        });
+      }
+    }
+
+    if (stockIssues.length > 0) {
+      return reply.code(400).send({
+        success: false,
+        message: "Certains produits ne sont plus disponibles en quantité suffisante",
+        stockIssues,
+      });
+    }
 
     // Calculer les prix côté backend (SEULE source de vérité)
     // TVA : 0% si pro UE avec vatStatus="validated", sinon 20%
@@ -120,16 +294,13 @@ export const createCheckoutSession = async (request, reply) => {
       throw new Error("Erreur lors de la création de la commande");
     }
 
-    // Créer la session Stripe Checkout avec automatic_tax
-    // Stripe vérifiera la TVA automatiquement même si on envoie déjà le TTC pour les particuliers
+    // Créer la session Stripe Checkout
+    // automatic_tax désactivé : les prix sont déjà calculés côté backend (TTC pour tous)
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: lineItems,
       mode: "payment",
       customer_creation: "always", // Toujours créer un customer Stripe
-      automatic_tax: {
-        enabled: true, // Stripe vérifie automatiquement la TVA française (même si prix déjà en TTC)
-      },
       success_url: `${process.env.FRONTEND_URL || "http://localhost:5173"}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONTEND_URL || "http://localhost:5173"}/checkout/cancel`,
       customer_email: request.user.email,
@@ -208,16 +379,72 @@ export const stripeWebhook = async (request, reply) => {
   }
 
   try {
+    // IDEMPOTENCE CRITIQUE : Utiliser INSERT directement (atomicité DB)
+    // Protection contre race condition : UNIQUE constraint garantit qu'un seul webhook peut traiter l'événement
+    let eventMarkResult;
+    
     // Gérer uniquement les événements de checkout session
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 
-      // Trouver la commande par session ID
+      // Trouver la commande par session ID AVANT de marquer l'événement
       const order = await Order.findByStripeSessionId(session.id);
 
       if (!order) {
-        console.error(`Commande non trouvée pour la session ${session.id}`);
-        return reply.code(404).send({ error: "Commande non trouvée" });
+        console.error(`Commande non trouvée pour la session ${session.id} (event ${event.id})`);
+        // Marquer comme orphelin (pas traité) pour permettre retry si commande créée avec retard
+        await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+        // Retourner 200 pour éviter retry immédiat Stripe, mais garder possibilité de retry manuel
+        return reply.send({ received: true, orphan: true });
+      }
+
+      // Tenter de marquer l'événement comme traité (atomicité DB)
+      eventMarkResult = await StripeWebhookEvent.tryMarkAsProcessed(event.id, event.type, order.id);
+      
+      if (eventMarkResult.alreadyProcessed) {
+        console.log(`Événement ${event.id} déjà traité à ${eventMarkResult.event.processed_at}`);
+        return reply.send({ received: true, idempotent: true });
+      }
+
+      // GÉRER COMMANDE EXPIRÉE : Si commande cancelled mais paiement valide
+      if (order.status === "cancelled") {
+        console.warn(
+          `Paiement reçu pour commande ${order.id} expirée/annulée. ` +
+          `Session Stripe ${session.id} toujours valide.`
+        );
+        
+        // Option 1 : Refund automatique (recommandé pour éviter fraude)
+        if (session.payment_status === "paid" && session.payment_intent) {
+          try {
+            // session.payment_intent peut être un string ou un objet PaymentIntent
+            const paymentIntentId = typeof session.payment_intent === "string" 
+              ? session.payment_intent 
+              : session.payment_intent.id;
+            
+            const refund = await stripe.refunds.create({
+              payment_intent: paymentIntentId,
+              reason: "requested_by_customer",
+            });
+            console.log(`Refund ${refund.id} créé pour commande expirée ${order.id}`);
+            
+            // Marquer l'événement comme traité
+            return reply.send({ 
+              received: true, 
+              action: "refunded_expired_order",
+              refund_id: refund.id 
+            });
+          } catch (refundError) {
+            console.error(`Erreur lors du refund pour commande expirée ${order.id}:`, refundError);
+            // Continuer pour permettre traitement manuel
+          }
+        }
+        
+        // Si refund échoue, retourner pour traitement manuel
+        return reply.send({ 
+          received: true, 
+          warning: "expired_order_payment",
+          order_id: order.id 
+        });
       }
 
       // Vérifier que la commande est en statut pending
@@ -244,15 +471,36 @@ export const stripeWebhook = async (request, reply) => {
           return reply.code(400).send({ error: "expectedAmount manquant" });
         }
 
-        // Comparer avec une tolérance de 1 centime pour les arrondis
-        // Pour les particuliers : on compare TTC avec TTC
-        // Pour les pros : on compare HT avec HT
+        // VÉRIFICATION CRITIQUE : Currency doit être EUR
+        if (session.currency && session.currency.toUpperCase() !== "EUR") {
+          console.error(
+            `[AUDIT] Currency invalide pour la commande ${order.id}: ` +
+            `Stripe=${session.currency}, Attendu=EUR, Event=${event.id}`
+          );
+          await Order.updateStatus(order.id, "failed");
+          return reply.code(400).send({ 
+            error: "Currency invalide",
+            currency: session.currency,
+          });
+        }
+
+        // VÉRIFICATION CRITIQUE : Montant Stripe doit correspondre au montant attendu
+        // Protection contre fraude coupon/dashboard/rounding
+        // Note : Stripe Climate peut ajouter 0.5% au montant si activé dans les paramètres
         const amountDifference = Math.abs((stripeAmountTotal || 0) - expectedAmount);
         
-        if (amountDifference > 1) {
+        // Tolérance selon type utilisateur :
+        // - Stripe Climate : 0.5% du montant (peut être ajouté automatiquement)
+        // - Arrondis : 1 centime (particuliers) ou 5 centimes (pros)
+        const climateTolerance = Math.ceil(expectedAmount * 0.005); // 0.5% en centimes
+        const roundingTolerance = order.isPro ? 5 : 1;
+        const tolerance = climateTolerance + roundingTolerance;
+        
+        if (amountDifference > tolerance) {
           console.error(
-            `Incohérence de montant pour la commande ${order.id}: ` +
-            `Stripe=${stripeAmountTotal}, Attendu=${expectedAmount}, Différence=${amountDifference}, isPro=${order.isPro}`
+            `[AUDIT] Incohérence de montant pour la commande ${order.id}: ` +
+            `Stripe=${stripeAmountTotal} centimes, Attendu=${expectedAmount} centimes, ` +
+            `Différence=${amountDifference}, Tolérance=${tolerance}, isPro=${order.isPro}, Event=${event.id}`
           );
           // Ne pas confirmer le paiement en cas d'incohérence
           await Order.updateStatus(order.id, "failed");
@@ -260,13 +508,101 @@ export const stripeWebhook = async (request, reply) => {
             error: "Incohérence de montant détectée",
             stripeAmount: stripeAmountTotal,
             expectedAmount,
+            difference: amountDifference,
+            tolerance,
             isPro: order.isPro,
           });
         }
+        
+        // Log si différence dans la tolérance (pour monitoring)
+        if (amountDifference > 0) {
+          console.log(
+            `[AUDIT] Différence de montant acceptée (dans tolérance) pour commande ${order.id}: ` +
+            `Différence=${amountDifference} centimes, Tolérance=${tolerance}, isPro=${order.isPro}`
+          );
+        }
+
+        // JOURNALISATION AUDIT : Paiement validé
+        console.log(
+          `[AUDIT] Paiement validé pour commande ${order.id}: ` +
+          `Montant=${stripeAmountTotal} centimes, Currency=${session.currency}, ` +
+          `PaymentIntent=${session.payment_intent}, Event=${event.id}`
+        );
 
         // Les montants correspondent, confirmer le paiement
         await Order.updateStatus(order.id, "paid");
         await Order.updatePaymentIntent(order.id, session.payment_intent);
+        
+        // L'événement est déjà marqué comme traité (atomicité DB au début)
+
+        // DÉCOMPTER LE STOCK : Récupérer les items de la commande et décrémenter le stock
+        // Utilisation d'une transaction batch pour garantir la cohérence
+        try {
+          const orderItems = await Order.findOrderItems(order.id);
+          
+          if (orderItems && orderItems.length > 0) {
+            // VÉRIFICATION STOCK AVANT DÉCOMPTE (double protection)
+            const stockCheckIssues = [];
+            for (const item of orderItems) {
+              const product = await Product.findById(item.productId);
+              if (!product) {
+                stockCheckIssues.push({
+                  productId: item.productId,
+                  reason: "Produit introuvable",
+                });
+              } else if (product.stockQuantity < item.quantity) {
+                stockCheckIssues.push({
+                  productId: item.productId,
+                  productName: product.nom || "Produit inconnu",
+                  availableStock: product.stockQuantity,
+                  requestedQuantity: item.quantity,
+                  reason: "Stock insuffisant",
+                });
+              }
+            }
+
+            if (stockCheckIssues.length > 0) {
+              console.error(
+                `[AUDIT] Stock insuffisant lors du décompte pour commande ${order.id}:`,
+                stockCheckIssues
+              );
+              // Ne pas bloquer le paiement mais logger l'erreur pour investigation manuelle
+              // Le stock sera quand même décompté (peut être un problème de timing)
+            }
+
+            // DÉCOMPTE ATOMIQUE EN BATCH (transaction)
+            const itemsToDecrement = orderItems.map(item => ({
+              productId: item.productId,
+              quantity: item.quantity,
+            }));
+
+            const updatedProducts = await Product.decrementStockBatch(itemsToDecrement);
+            
+            console.log(
+              `[AUDIT] Stock décompté pour commande ${order.id}: ` +
+              `${updatedProducts.length} produit(s) mis à jour`
+            );
+            
+            // Log détaillé pour chaque produit
+            orderItems.forEach((item, index) => {
+              const updatedProduct = updatedProducts[index];
+              if (updatedProduct) {
+                console.log(
+                  `  - Produit ${item.productId}: -${item.quantity} unité(s), ` +
+                  `stock restant: ${updatedProduct.stockQuantity}`
+                );
+              }
+            });
+          }
+        } catch (stockError) {
+          // Erreur critique : le décompte a échoué
+          // Ne pas bloquer le paiement (déjà confirmé par Stripe) mais logger l'erreur
+          console.error(
+            `[AUDIT] ERREUR CRITIQUE lors du décompte du stock pour commande ${order.id}:`,
+            stockError
+          );
+          // TODO: Notifier l'admin pour traitement manuel
+        }
 
         // Vider le panier UNIQUEMENT après confirmation du paiement
         await Cart.clear(order.userId);
@@ -298,20 +634,41 @@ export const stripeWebhook = async (request, reply) => {
           console.error(`Erreur lors de la création de la livraison pour la commande ${order.id}:`, deliveryError);
         }
 
-        console.log(`Commande ${order.id} confirmée et panier vidé`);
+        console.log(`[AUDIT] Commande ${order.id} confirmée et panier vidé`);
       } else {
-        console.warn(`Session ${session.id} non payée (statut: ${session.payment_status})`);
+        console.warn(`[AUDIT] Session ${session.id} non payée (statut: ${session.payment_status}), Event=${event.id}`);
+        // L'événement est déjà marqué comme traité (atomicité DB au début)
       }
     } else if (event.type === "checkout.session.async_payment_failed") {
       const session = event.data.object;
+
+      // Tenter de marquer l'événement (atomicité DB)
+      const eventMarkResult = await StripeWebhookEvent.tryMarkAsProcessed(
+        event.id,
+        event.type,
+        null
+      );
+      
+      if (eventMarkResult.alreadyProcessed) {
+        return reply.send({ received: true, idempotent: true });
+      }
 
       // Trouver la commande par session ID
       const order = await Order.findByStripeSessionId(session.id);
 
       if (order && order.status === "pending") {
         await Order.updateStatus(order.id, "failed");
-        console.log(`Commande ${order.id} marquée comme échouée (paiement asynchrone échoué)`);
+        console.log(`[AUDIT] Commande ${order.id} marquée comme échouée (paiement asynchrone échoué), Event=${event.id}`);
+        
+        // Mettre à jour l'order_id dans l'événement
+        await pool.query(
+          "UPDATE stripe_webhook_events SET order_id = $1 WHERE event_id = $2",
+          [order.id, event.id]
+        );
       }
+    } else {
+      // Pour les autres types d'événements, marquer comme traité pour éviter le spam
+      await StripeWebhookEvent.tryMarkAsProcessed(event.id, event.type, null);
     }
 
     reply.send({ received: true });
@@ -323,15 +680,79 @@ export const stripeWebhook = async (request, reply) => {
 
 /**
  * Vérifier le statut d'une session
+ * 
+ * Sécurité anti-enumeration :
+ * - Validation format sessionId AVANT appel Stripe
+ * - Vérification ownership en DB AVANT appel Stripe
+ * - Vérification cohérence session/commande
+ * - Support rôle admin
  */
 export const getSessionStatus = async (request, reply) => {
   try {
     const { sessionId } = request.params;
+    const userId = request.user.id;
+    const isAdmin = request.user.role === "admin";
 
+    // 1. Validation format sessionId AVANT tout appel externe (anti-enumeration)
+    if (!validateStripeSessionId(sessionId)) {
+      return reply.code(400).send({
+        success: false,
+        message: "Format de session invalide",
+      });
+    }
+
+    // 2. Vérifier ownership en DB AVANT appel Stripe (anti-enumeration)
+    const order = await Order.findByStripeSessionId(sessionId);
+
+    if (!order) {
+      // Ne pas révéler si la session existe ou non (anti-enumeration)
+      return reply.code(404).send({
+        success: false,
+        message: "Session non trouvée",
+      });
+    }
+
+    // 3. Vérification ownership (sauf admin)
+    if (!isAdmin) {
+      const orderUserId = order.userId ? order.userId.toString() : null;
+      const currentUserId = userId ? userId.toString() : null;
+
+      if (orderUserId !== currentUserId) {
+        return reply.code(403).send({
+          success: false,
+          message: "Accès non autorisé",
+        });
+      }
+    }
+
+    // 4. Maintenant seulement, appeler Stripe (ownership vérifié)
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-    // Trouver la commande associée
-    const order = await Order.findByStripeSessionId(sessionId);
+    // 5. Vérification cohérence session/commande (sécurité supplémentaire)
+    if (order.stripeSessionId !== session.id) {
+      console.error(
+        `Incohérence détectée: order.stripeSessionId=${order.stripeSessionId}, session.id=${session.id}`
+      );
+      return reply.code(500).send({
+        success: false,
+        message: "Erreur de cohérence des données",
+      });
+    }
+
+    // 6. Vérifier que les métadonnées correspondent
+    if (
+      session.metadata &&
+      session.metadata.orderId &&
+      session.metadata.orderId !== order.id.toString()
+    ) {
+      console.error(
+        `Incohérence métadonnées: session.metadata.orderId=${session.metadata.orderId}, order.id=${order.id}`
+      );
+      return reply.code(500).send({
+        success: false,
+        message: "Erreur de cohérence des données",
+      });
+    }
 
     reply.type("application/json");
     return reply.send({
@@ -342,10 +763,18 @@ export const getSessionStatus = async (request, reply) => {
           status: session.payment_status,
           customerEmail: session.customer_email,
         },
-        order: order || null,
+        order: order,
       },
     });
   } catch (error) {
+    // Ne pas exposer les détails d'erreur Stripe (sécurité)
+    if (error.type === "StripeInvalidRequestError") {
+      return reply.code(404).send({
+        success: false,
+        message: "Session non trouvée",
+      });
+    }
+
     console.error("Erreur lors de la récupération de la session:", error);
     reply.type("application/json");
     return reply.code(500).send({

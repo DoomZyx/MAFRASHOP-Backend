@@ -1,13 +1,48 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.js";
 import { validateCompanyAsync } from "../middleware/auth.js";
+import BlacklistedToken from "../models/blacklistedTokens.js";
+import { generateJTI } from "../models/blacklistedTokens.js";
 
-const generateToken = (userId) => {
+/**
+ * Génère un access token (courte durée) et un refresh token (longue durée)
+ * @param {string} userId - ID de l'utilisateur
+ * @returns {Object} { accessToken, refreshToken, accessTokenExpiresIn }
+ */
+const generateTokens = (userId) => {
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET non configuré");
   }
 
-  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: "7d" });
+  // Access token : 1 heure (sécurité renforcée)
+  const jti = generateJTI();
+  const accessToken = jwt.sign(
+    { userId, jti, type: "access" },
+    process.env.JWT_SECRET,
+    { expiresIn: "1h" }
+  );
+
+  // Refresh token : 7 jours (pour maintenir la session)
+  const refreshToken = jwt.sign(
+    { userId, jti, type: "refresh" },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+
+  return {
+    accessToken,
+    refreshToken,
+    accessTokenExpiresIn: 3600, // 1 heure en secondes
+  };
+};
+
+/**
+ * Génère uniquement un access token (pour compatibilité)
+ * @deprecated Utiliser generateTokens à la place
+ */
+const generateToken = (userId) => {
+  const { accessToken } = generateTokens(userId);
+  return accessToken;
 };
 
 export const register = async (request, reply) => {
@@ -37,7 +72,7 @@ export const register = async (request, reply) => {
       authProvider: "local",
     });
 
-    const token = generateToken(user.id);
+    const tokens = generateTokens(user.id);
 
     reply.type("application/json");
     reply.send({
@@ -45,7 +80,9 @@ export const register = async (request, reply) => {
       message: "Inscription réussie",
       data: {
         user: User.toJSON(user),
-        token,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.accessTokenExpiresIn,
       },
     });
   } catch (error) {
@@ -92,7 +129,7 @@ export const login = async (request, reply) => {
       });
     }
 
-    const token = generateToken(user.id);
+    const tokens = generateTokens(user.id);
 
     reply.type("application/json");
     reply.send({
@@ -100,7 +137,9 @@ export const login = async (request, reply) => {
       message: "Connexion réussie",
       data: {
         user: User.toJSON(user),
-        token,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.accessTokenExpiresIn,
       },
     });
   } catch (error) {
@@ -210,7 +249,7 @@ export const googleCallback = async (request, reply) => {
       }
     }
 
-    const token = generateToken(user.id);
+    const tokens = generateTokens(user.id);
 
     reply.type("application/json");
     reply.send({
@@ -218,7 +257,9 @@ export const googleCallback = async (request, reply) => {
       message: "Authentification Google réussie",
       data: {
         user: User.toJSON(user),
-        token,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.accessTokenExpiresIn,
       },
     });
   } catch (error) {
@@ -273,13 +314,15 @@ export const adminLogin = async (request, reply) => {
       });
     }
 
-    const token = generateToken(user.id);
+    const tokens = generateTokens(user.id);
 
     reply.type("application/json");
     reply.send({
       success: true,
       message: "Connexion admin réussie",
-      token,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresIn: tokens.accessTokenExpiresIn,
       user: {
         id: user.id,
         email: user.email,
@@ -390,13 +433,15 @@ export const adminGoogleCallback = async (request, reply) => {
       user = await User.findById(user.id);
     }
 
-    const token = generateToken(user.id);
+    const tokens = generateTokens(user.id);
 
     reply.type("application/json");
     reply.send({
       success: true,
       message: "Authentification admin Google réussie",
-      token,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresIn: tokens.accessTokenExpiresIn,
       user: {
         id: user.id,
         email: user.email,
@@ -470,11 +515,138 @@ export const getMe = async (request, reply) => {
 };
 
 export const logout = async (request, reply) => {
-  reply.type("application/json");
-  reply.send({
-    success: true,
-    message: "Déconnexion réussie",
-  });
+  try {
+    const authHeader = request.headers.authorization;
+    
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1];
+      
+      try {
+        // Décoder le token pour récupérer jti et exp
+        const decoded = jwt.decode(token);
+        
+        if (decoded && decoded.jti && decoded.exp) {
+          const expiresAt = new Date(decoded.exp * 1000);
+          
+          // Blacklister le token
+          await BlacklistedToken.blacklist(
+            decoded.jti,
+            request.user?.id || decoded.userId,
+            expiresAt,
+            "logout"
+          );
+          
+          console.log(
+            `[AUDIT AUTH] Token blacklisté lors du logout | ` +
+            `UserId: ${request.user?.id || decoded.userId} | JTI: ${decoded.jti} | IP: ${request.ip || "unknown"}`
+          );
+        }
+      } catch (error) {
+        // Si le token est invalide, on continue quand même (logout réussi)
+        console.warn(`[AUDIT AUTH] Erreur lors du blacklist token (logout):`, error.message);
+      }
+    }
+
+    reply.type("application/json");
+    reply.send({
+      success: true,
+      message: "Déconnexion réussie",
+    });
+  } catch (error) {
+    console.error("Erreur lors du logout:", error);
+    reply.type("application/json");
+    reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la déconnexion",
+    });
+  }
+};
+
+export const refreshToken = async (request, reply) => {
+  try {
+    const { refreshToken: refreshTokenValue } = request.body;
+
+    if (!refreshTokenValue) {
+      return reply.code(400).send({
+        success: false,
+        message: "Refresh token requis",
+      });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      throw new Error("JWT_SECRET non configuré");
+    }
+
+    // Vérifier le refresh token
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshTokenValue, process.env.JWT_SECRET);
+    } catch (error) {
+      if (error.name === "TokenExpiredError") {
+        return reply.code(401).send({
+          success: false,
+          message: "Refresh token expiré",
+        });
+      }
+      return reply.code(401).send({
+        success: false,
+        message: "Refresh token invalide",
+      });
+    }
+
+    // Vérifier que c'est bien un refresh token
+    if (decoded.type !== "refresh") {
+      return reply.code(401).send({
+        success: false,
+        message: "Token invalide (doit être un refresh token)",
+      });
+    }
+
+    // Vérifier que le token n'est pas blacklisté
+    if (decoded.jti) {
+      const isBlacklisted = await BlacklistedToken.isBlacklisted(decoded.jti);
+      if (isBlacklisted) {
+        console.warn(
+          `[AUDIT AUTH] Tentative d'utilisation d'un refresh token blacklisté | ` +
+          `UserId: ${decoded.userId} | JTI: ${decoded.jti} | IP: ${request.ip || "unknown"}`
+        );
+        return reply.code(401).send({
+          success: false,
+          message: "Token révoqué",
+        });
+      }
+    }
+
+    // Vérifier que l'utilisateur existe toujours
+    const user = await User.findById(decoded.userId);
+    if (!user) {
+      return reply.code(401).send({
+        success: false,
+        message: "Utilisateur introuvable",
+      });
+    }
+
+    // Générer de nouveaux tokens
+    const tokens = generateTokens(user.id);
+
+    reply.type("application/json");
+    reply.send({
+      success: true,
+      message: "Tokens renouvelés",
+      data: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.accessTokenExpiresIn,
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors du refresh token:", error);
+    reply.type("application/json");
+    reply.code(500).send({
+      success: false,
+      message: "Erreur lors du renouvellement du token",
+    });
+  }
 };
 
 export const requestPro = async (request, reply) => {

@@ -1,12 +1,31 @@
 import jwt from "jsonwebtoken";
 import User from "../models/user.js";
 import { verifySiretAndCompanyName } from "../API/insee.js";
+import BlacklistedToken from "../models/blacklistedTokens.js";
+
+/**
+ * Journaliser un échec d'authentification pour audit sécurité
+ */
+const logAuthFailure = (reason, details = {}) => {
+  const ip = details.ip || "unknown";
+  const userId = details.userId || "unknown";
+  const timestamp = new Date().toISOString();
+  
+  console.warn(
+    `[AUDIT AUTH] Échec authentification: ${reason} | ` +
+    `IP: ${ip} | UserId: ${userId} | Timestamp: ${timestamp} | ` +
+    `Details: ${JSON.stringify(details)}`
+  );
+};
 
 export const verifyToken = async (request, reply) => {
+  const clientIp = request.ip || request.headers["x-forwarded-for"] || "unknown";
+  
   try {
     const authHeader = request.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      logAuthFailure("Token manquant", { ip: clientIp, path: request.url });
       return reply.code(401).send({ 
         success: false, 
         message: "Token d'authentification manquant" 
@@ -19,24 +38,96 @@ export const verifyToken = async (request, reply) => {
       throw new Error("JWT_SECRET non configuré");
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (jwtError) {
+      // Journaliser selon le type d'erreur
+      if (jwtError.name === "TokenExpiredError") {
+        logAuthFailure("Token expiré", { 
+          ip: clientIp, 
+          path: request.url,
+          userId: jwt.decode(token)?.userId || "unknown"
+        });
+        return reply.code(401).send({ 
+          success: false, 
+          message: "Token expiré" 
+        });
+      }
+      
+      if (jwtError.name === "JsonWebTokenError") {
+        logAuthFailure("Token invalide (signature)", { 
+          ip: clientIp, 
+          path: request.url 
+        });
+      } else {
+        logAuthFailure("Erreur vérification token", { 
+          ip: clientIp, 
+          path: request.url,
+          error: jwtError.name 
+        });
+      }
+      
+      return reply.code(401).send({ 
+        success: false, 
+        message: "Token invalide" 
+      });
+    }
+
+    // VÉRIFICATION BLACKLIST : Vérifier si le token est blacklisté
+    if (decoded.jti) {
+      const isBlacklisted = await BlacklistedToken.isBlacklisted(decoded.jti);
+      if (isBlacklisted) {
+        logAuthFailure("Token blacklisté", { 
+          ip: clientIp, 
+          path: request.url,
+          userId: decoded.userId,
+          jti: decoded.jti
+        });
+        return reply.code(401).send({ 
+          success: false, 
+          message: "Token révoqué" 
+        });
+      }
+    }
+
+    // Vérifier que c'est un access token (pas un refresh token)
+    if (decoded.type && decoded.type !== "access") {
+      logAuthFailure("Mauvais type de token", { 
+        ip: clientIp, 
+        path: request.url,
+        userId: decoded.userId,
+        tokenType: decoded.type
+      });
+      return reply.code(401).send({ 
+        success: false, 
+        message: "Token invalide (type incorrect)" 
+      });
+    }
+
     const user = await User.findById(decoded.userId);
     
     if (!user) {
+      logAuthFailure("Utilisateur introuvable", { 
+        ip: clientIp, 
+        path: request.url,
+        userId: decoded.userId 
+      });
       return reply.code(401).send({ 
         success: false, 
         message: "Utilisateur introuvable" 
       });
     }
 
+    // SÉCURITÉ : Le rôle vient toujours de la DB, jamais du JWT
+    // Même si le JWT est modifié, le rôle est récupéré depuis la DB
     request.user = user;
   } catch (error) {
-    if (error.name === "TokenExpiredError") {
-      return reply.code(401).send({ 
-        success: false, 
-        message: "Token expiré" 
-      });
-    }
+    logAuthFailure("Erreur serveur authentification", { 
+      ip: clientIp, 
+      path: request.url,
+      error: error.message 
+    });
     
     return reply.code(401).send({ 
       success: false, 

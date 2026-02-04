@@ -1,5 +1,6 @@
 import pool from "../db.js";
 import Product from "./products.js";
+import Order from "./orders.js";
 
 // Mapper les données du panier avec les produits (JOIN)
 const mapCartItem = (row) => {
@@ -61,8 +62,22 @@ class Cart {
     return result.rows[0] || null;
   }
 
+  // Vérifier si l'utilisateur a une commande pending (panier verrouillé)
+  static async hasPendingOrder(userId) {
+    const pendingOrders = await Order.findPendingByUserId(userId);
+    return pendingOrders.length > 0;
+  }
+
   // Ajouter un produit au panier
   static async addItem(userId, productId, quantity = 1) {
+    // VÉRIFICATION : Empêcher modification panier si commande pending
+    const hasPending = await this.hasPendingOrder(userId);
+    if (hasPending) {
+      throw new Error(
+        "Impossible de modifier le panier : une commande est en cours de traitement"
+      );
+    }
+
     const existing = await this.findItemByUserAndProduct(userId, productId);
 
     if (existing) {
@@ -84,6 +99,14 @@ class Cart {
 
   // Mettre à jour la quantité
   static async updateQuantity(userId, productId, quantity) {
+    // VÉRIFICATION : Empêcher modification panier si commande pending
+    const hasPending = await this.hasPendingOrder(userId);
+    if (hasPending) {
+      throw new Error(
+        "Impossible de modifier le panier : une commande est en cours de traitement"
+      );
+    }
+
     const result = await pool.query(
       "UPDATE user_cart SET quantity = $1 WHERE user_id = $2 AND product_id = $3 RETURNING *",
       [quantity, userId, productId]
@@ -98,6 +121,14 @@ class Cart {
 
   // Retirer un produit du panier
   static async removeItem(userId, productId) {
+    // VÉRIFICATION : Empêcher modification panier si commande pending
+    const hasPending = await this.hasPendingOrder(userId);
+    if (hasPending) {
+      throw new Error(
+        "Impossible de modifier le panier : une commande est en cours de traitement"
+      );
+    }
+
     const result = await pool.query(
       "DELETE FROM user_cart WHERE user_id = $1 AND product_id = $2 RETURNING *",
       [userId, productId]

@@ -291,6 +291,108 @@ class Product {
 
     return mapProduct(result.rows[0]);
   }
+
+  /**
+   * Décrémenter le stock d'un produit de manière atomique (protection race condition)
+   * Vérifie ET décrémente en une seule requête SQL atomique
+   * @param {number|string} productId - ID du produit
+   * @param {number} quantity - Quantité à décrémenter
+   * @returns {Object|null} Produit mis à jour ou null si erreur/stock insuffisant
+   * @throws {Error} Si stock insuffisant
+   */
+  static async decrementStock(productId, quantity) {
+    if (!productId || quantity <= 0) {
+      throw new Error("productId et quantity doivent être valides");
+    }
+
+    // REQUÊTE ATOMIQUE : Vérifie ET décrémente en une seule opération
+    // Protection contre race condition : WHERE stock_quantity >= $1 garantit que le stock est suffisant
+    const result = await pool.query(
+      `UPDATE products 
+       SET stock_quantity = stock_quantity - $1, 
+           updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $2 
+         AND stock_quantity >= $1
+       RETURNING *`,
+      [quantity, productId]
+    );
+
+    if (result.rows.length === 0) {
+      // Soit le produit n'existe pas, soit le stock est insuffisant
+      // Vérifier lequel pour donner un message d'erreur approprié
+      const product = await this.findById(productId);
+      if (!product) {
+        throw new Error(`Produit ${productId} introuvable`);
+      }
+      throw new Error(
+        `Stock insuffisant pour produit ${productId}. ` +
+        `Stock disponible : ${product.stockQuantity}, Quantité demandée : ${quantity}`
+      );
+    }
+
+    const updatedProduct = mapProduct(result.rows[0]);
+    
+    // Vérification supplémentaire : le stock ne doit pas être négatif
+    if (updatedProduct.stockQuantity < 0) {
+      // Rollback manuel si nécessaire (normalement ne devrait jamais arriver avec la condition WHERE)
+      throw new Error(`Erreur : stock négatif détecté pour produit ${productId}`);
+    }
+
+    return updatedProduct;
+  }
+
+  /**
+   * Décrémenter le stock de plusieurs produits dans une transaction
+   * Protection contre état incohérent si un produit échoue
+   * @param {Array} items - Array de {productId, quantity}
+   * @returns {Array} Produits mis à jour
+   * @throws {Error} Si un produit échoue, rollback complet
+   */
+  static async decrementStockBatch(items) {
+    if (!items || items.length === 0) {
+      return [];
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const updatedProducts = [];
+      for (const item of items) {
+        if (!item.productId || item.quantity <= 0) {
+          throw new Error(`Item invalide : productId=${item.productId}, quantity=${item.quantity}`);
+        }
+
+        const result = await client.query(
+          `UPDATE products 
+           SET stock_quantity = stock_quantity - $1, 
+               updated_at = CURRENT_TIMESTAMP 
+           WHERE id = $2 
+             AND stock_quantity >= $1
+           RETURNING *`,
+          [item.quantity, item.productId]
+        );
+
+        if (result.rows.length === 0) {
+          const product = await this.findById(item.productId);
+          throw new Error(
+            `Stock insuffisant pour produit ${item.productId}. ` +
+            `Stock disponible : ${product?.stockQuantity || 0}, Quantité demandée : ${item.quantity}`
+          );
+        }
+
+        updatedProducts.push(mapProduct(result.rows[0]));
+      }
+
+      await client.query("COMMIT");
+      return updatedProducts;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 export default Product;

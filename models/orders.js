@@ -145,6 +145,15 @@ class Order {
     return result.rows.map(mapOrder);
   }
 
+  // Trouver les commandes pending d'un utilisateur (pour idempotence)
+  static async findPendingByUserId(userId) {
+    const result = await pool.query(
+      "SELECT * FROM orders WHERE user_id = $1 AND status = $2 ORDER BY created_at DESC",
+      [userId, "pending"]
+    );
+    return result.rows.map(mapOrder);
+  }
+
   // Trouver toutes les commandes avec les infos utilisateur (pour l'admin)
   static async findAllWithUser() {
     const result = await pool.query(

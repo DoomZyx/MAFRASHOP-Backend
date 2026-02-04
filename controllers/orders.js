@@ -43,6 +43,14 @@ export const getOrderById = async (request, reply) => {
     const { id } = request.params;
     const userId = request.user.id;
 
+    // Valider le format de l'ID (doit être un nombre entier positif)
+    if (!id || !/^\d+$/.test(id.toString())) {
+      return reply.code(400).send({
+        success: false,
+        message: "ID de commande invalide",
+      });
+    }
+
     const order = await Order.findById(id);
 
     if (!order) {
@@ -53,7 +61,11 @@ export const getOrderById = async (request, reply) => {
     }
 
     // Vérifier que la commande appartient à l'utilisateur (sauf si admin)
-    if (order.userId !== userId.toString() && request.user.role !== "admin") {
+    // Comparaison stricte en convertissant les deux en string pour éviter les problèmes de type
+    const orderUserId = order.userId ? order.userId.toString() : null;
+    const currentUserId = userId ? userId.toString() : null;
+    
+    if (orderUserId !== currentUserId && request.user.role !== "admin") {
       return reply.code(403).send({
         success: false,
         message: "Accès non autorisé",

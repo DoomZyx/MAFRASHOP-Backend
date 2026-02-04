@@ -4,6 +4,7 @@ import {
   googleCallback,
   getMe,
   logout,
+  refreshToken,
   updateProfile,
   updateCompanyProfile,
   requestPro,
@@ -19,17 +20,23 @@ import {
   createAdminUser,
 } from "../controllers/auth.js";
 import { verifyToken, isAdmin } from "../middleware/auth.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 
 export default async function authRoutes(fastify, options) {
-  fastify.post("/api/auth/register", register);
+  // Rate limiting pour les endpoints d'authentification (protection brute force)
+  const authRateLimit = rateLimit({ max: 5, windowMs: 15 * 60 * 1000 }); // 5 tentatives / 15 min
 
-  fastify.post("/api/auth/login", login);
+  fastify.post("/api/auth/register", { preHandler: authRateLimit }, register);
 
-  fastify.post("/api/auth/google/callback", googleCallback);
+  fastify.post("/api/auth/login", { preHandler: authRateLimit }, login);
+
+  fastify.post("/api/auth/google/callback", { preHandler: authRateLimit }, googleCallback);
 
   fastify.get("/api/auth/me", { preHandler: verifyToken }, getMe);
 
   fastify.post("/api/auth/logout", { preHandler: verifyToken }, logout);
+
+  fastify.post("/api/auth/refresh", refreshToken);
 
   fastify.get("/api/auth/google/config", async (request, reply) => {
     const googleConfig = {
@@ -85,9 +92,10 @@ export default async function authRoutes(fastify, options) {
     validateVatManually
   );
 
-  // Admin routes
-  fastify.post("/api/auth/admin/login", adminLogin);
-  fastify.post("/api/auth/admin/google/callback", adminGoogleCallback);
+  // Admin routes (rate limiting plus strict)
+  const adminRateLimit = rateLimit({ max: 3, windowMs: 15 * 60 * 1000 }); // 3 tentatives / 15 min
+  fastify.post("/api/auth/admin/login", { preHandler: adminRateLimit }, adminLogin);
+  fastify.post("/api/auth/admin/google/callback", { preHandler: adminRateLimit }, adminGoogleCallback);
   fastify.get("/api/auth/admin/me", { preHandler: verifyToken }, adminMe);
   fastify.get("/api/auth/admin/check", { preHandler: verifyToken }, adminMe);
   
