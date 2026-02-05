@@ -102,7 +102,8 @@ await fastify.register(cors, {
     console.warn("   Origin normalisée:", normalizedOrigin);
     console.warn("   Origines autorisées (brutes):", corsOrigins);
     console.warn("   Origines autorisées (normalisées):", normalizedCorsOrigins);
-    return cb(new Error("Not allowed by CORS"), false);
+    // Retourner null au lieu d'une erreur pour que Fastify renvoie quand même les headers CORS
+    return cb(null, false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
@@ -118,6 +119,9 @@ await fastify.register(multipart, {
 
 // Headers de sécurité pour protéger contre XSS et autres attaques
 fastify.addHook("onRequest", async (request, reply) => {
+  // Log pour vérifier si les requêtes atteignent Fastify
+  console.log(`📥 Requête ${request.method} ${request.url} depuis origin: ${request.headers.origin || 'none'}`);
+  
   // Content Security Policy : empêche l'exécution de scripts non autorisés
   reply.header("Content-Security-Policy", 
     "default-src 'self'; " +
