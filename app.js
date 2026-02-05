@@ -43,11 +43,27 @@ const fastify = Fastify({
 
 // Parser CORS_ORIGINS
 const corsOrigins = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(",").map(o => o.trim())
+  ? process.env.CORS_ORIGINS.split(",").map(o => o.trim()).filter(o => o.length > 0)
   : [];
+
+// Normaliser les origines (supprimer trailing slash, normaliser)
+const normalizeOrigin = (url) => {
+  if (!url) return url;
+  try {
+    const urlObj = new URL(url);
+    urlObj.pathname = urlObj.pathname.replace(/\/$/, ''); // Supprimer trailing slash
+    return urlObj.toString();
+  } catch {
+    return url.replace(/\/$/, ''); // Fallback simple si URL invalide
+  }
+};
+
+const normalizedCorsOrigins = corsOrigins.map(normalizeOrigin);
 
 if (!process.env.CORS_ORIGINS) {
   console.warn("⚠️  CORS_ORIGINS non défini dans les variables d'environnement - aucune origine autorisée par défaut");
+} else {
+  console.log("✅ Origines CORS autorisées:", normalizedCorsOrigins);
 }
 
 // Enregistrer CORS
@@ -56,11 +72,20 @@ await fastify.register(cors, {
     // Autorise Postman / curl / server-side requests
     if (!origin) return cb(null, true);
 
+    const normalizedOrigin = normalizeOrigin(origin);
+    
+    // Vérifier avec l'origine normalisée
+    if (normalizedCorsOrigins.includes(normalizedOrigin)) {
+      return cb(null, true);
+    }
+
+    // Vérifier aussi avec l'origine brute (au cas où)
     if (corsOrigins.includes(origin)) {
       return cb(null, true);
     }
 
-    console.warn("CORS bloqué pour :", origin);
+    console.warn("❌ CORS bloqué pour:", origin);
+    console.warn("   Origines autorisées:", normalizedCorsOrigins);
     return cb(new Error("Not allowed by CORS"), false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
