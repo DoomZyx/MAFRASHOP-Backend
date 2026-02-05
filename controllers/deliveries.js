@@ -294,3 +294,61 @@ export const updateTracking = async (request, reply) => {
   }
 };
 
+/**
+ * Met à jour la date et heure de livraison programmée (admin seulement)
+ */
+export const updateScheduledDeliveryDateTime = async (request, reply) => {
+  try {
+    if (request.user.role !== "admin") {
+      return reply.code(403).send({
+        success: false,
+        message: "Accès réservé aux administrateurs",
+      });
+    }
+
+    const { id } = request.params;
+    const { scheduledDeliveryDateTime } = request.body;
+
+    // Vérifier que la livraison existe
+    const existingDelivery = await Delivery.findById(id);
+    if (!existingDelivery) {
+      return reply.code(404).send({
+        success: false,
+        message: "Livraison non trouvée",
+      });
+    }
+
+    // Valider le format de la date/heure si fournie
+    if (scheduledDeliveryDateTime !== null && scheduledDeliveryDateTime !== undefined) {
+      const date = new Date(scheduledDeliveryDateTime);
+      if (isNaN(date.getTime())) {
+        return reply.code(400).send({
+          success: false,
+          message: "Format de date/heure invalide",
+        });
+      }
+    }
+
+    const delivery = await Delivery.updateScheduledDeliveryDateTime(
+      id,
+      scheduledDeliveryDateTime || null
+    );
+
+    reply.type("application/json");
+    return reply.send({
+      success: true,
+      message: "Date et heure de livraison mises à jour",
+      data: {
+        delivery,
+      },
+    });
+  } catch (error) {
+    console.error("Erreur lors de la mise à jour de la date/heure de livraison:", error);
+    reply.type("application/json");
+    return reply.code(500).send({
+      success: false,
+      message: "Erreur lors de la mise à jour de la date/heure de livraison",
+    });
+  }
+};
+

@@ -5,6 +5,7 @@ import {
   getAllDeliveries,
   updateDeliveryStatus,
   updateTracking,
+  updateScheduledDeliveryDateTime,
 } from "../controllers/deliveries.js";
 import { verifyToken } from "../middleware/auth.js";
 
@@ -34,6 +35,13 @@ export default async function deliveriesRoutes(fastify, options) {
     "/api/admin/deliveries/:id/tracking",
     { preHandler: verifyToken },
     updateTracking
+  );
+
+  // Mettre à jour la date et heure de livraison programmée (admin seulement)
+  fastify.patch(
+    "/api/admin/deliveries/:id/scheduled-delivery-datetime",
+    { preHandler: verifyToken },
+    updateScheduledDeliveryDateTime
   );
 }
 

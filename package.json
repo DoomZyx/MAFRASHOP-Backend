@@ -18,6 +18,7 @@
     "migrate:orders-expected-amount": "node script/addExpectedAmountToOrders.js",
     "migrate:invoices": "node script/createInvoicesTable.js",
     "migrate:deliveries": "node script/createDeliveriesTable.js",
+    "migrate:deliveries-datetime": "node script/addScheduledDeliveryDateTime.js",
     "migrate:products-stock-sku": "node script/addStockAndSkuToProducts.js",
     "migrate:stock-quantity": "node script/updateStockToQuantity.js",
     "migrate:orders-status": "node script/addShippedPreparingStatus.js",

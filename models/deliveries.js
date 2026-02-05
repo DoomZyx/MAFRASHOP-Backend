@@ -11,6 +11,7 @@ const mapDelivery = (row) => {
     carrier: row.carrier,
     estimatedDeliveryDate: row.estimated_delivery_date,
     actualDeliveryDate: row.actual_delivery_date,
+    scheduledDeliveryDateTime: row.scheduled_delivery_datetime,
     notes: row.notes,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -147,6 +148,18 @@ class Delivery {
        WHERE id = $2 
        RETURNING *`,
       [notes, id]
+    );
+    return mapDelivery(result.rows[0]);
+  }
+
+  // Mettre à jour la date et heure de livraison programmée
+  static async updateScheduledDeliveryDateTime(id, scheduledDeliveryDateTime) {
+    const result = await pool.query(
+      `UPDATE deliveries 
+       SET scheduled_delivery_datetime = $1, updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $2 
+       RETURNING *`,
+      [scheduledDeliveryDateTime, id]
     );
     return mapDelivery(result.rows[0]);
   }
