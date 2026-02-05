@@ -70,22 +70,31 @@ if (!process.env.CORS_ORIGINS) {
 await fastify.register(cors, {
   origin: (origin, cb) => {
     // Autorise Postman / curl / server-side requests
-    if (!origin) return cb(null, true);
+    if (!origin) {
+      console.log("🔵 CORS: Requête sans origin (server-side) - autorisée");
+      return cb(null, true);
+    }
 
+    console.log("🔍 CORS: Origin reçue:", origin);
     const normalizedOrigin = normalizeOrigin(origin);
+    console.log("🔍 CORS: Origin normalisée:", normalizedOrigin);
     
     // Vérifier avec l'origine normalisée
     if (normalizedCorsOrigins.includes(normalizedOrigin)) {
+      console.log("✅ CORS: Origin autorisée (normalisée)");
       return cb(null, true);
     }
 
     // Vérifier aussi avec l'origine brute (au cas où)
     if (corsOrigins.includes(origin)) {
+      console.log("✅ CORS: Origin autorisée (brute)");
       return cb(null, true);
     }
 
     console.warn("❌ CORS bloqué pour:", origin);
-    console.warn("   Origines autorisées:", normalizedCorsOrigins);
+    console.warn("   Origin normalisée:", normalizedOrigin);
+    console.warn("   Origines autorisées (brutes):", corsOrigins);
+    console.warn("   Origines autorisées (normalisées):", normalizedCorsOrigins);
     return cb(new Error("Not allowed by CORS"), false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
