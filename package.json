@@ -21,7 +21,8 @@
     "migrate:products-stock-sku": "node script/addStockAndSkuToProducts.js",
     "migrate:stock-quantity": "node script/updateStockToQuantity.js",
     "migrate:orders-status": "node script/addShippedPreparingStatus.js",
-    "create-admin": "node script/createAdmin.js"
+    "create-admin": "node script/createAdmin.js",
+    "migrate:images-to-supabase": "node script/updateImageUrlsToSupabase.js"
   },
   "keywords": [],
   "author": "",
@@ -29,9 +30,11 @@
   "packageManager": "pnpm@10.12.4",
   "dependencies": {
     "@fastify/cors": "^11.2.0",
+    "@fastify/multipart": "^9.4.0",
     "@fastify/passport": "^3.0.2",
     "@fastify/secure-session": "^8.3.0",
     "@fastify/websocket": "^11.2.0",
+    "@supabase/supabase-js": "^2.94.1",
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
     "csv-parser": "^3.2.0",
@@ -44,6 +47,7 @@
     "passport-google-oauth20": "^2.0.0",
     "pdfkit": "^0.15.0",
     "pg": "^8.17.1",
+    "sharp": "^0.34.5",
     "stripe": "^14.21.0"
   },
   "devDependencies": {

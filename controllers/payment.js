@@ -378,6 +378,21 @@ export const stripeWebhook = async (request, reply) => {
     return reply.code(400).send(`Webhook Error: ${err.message}`);
   }
 
+  // 🔐 PROTECTION REPLAY WEBHOOK : Rejeter les événements trop anciens (> 5 minutes)
+  // Protection contre rejeu d'événements interceptés
+  const eventAge = Date.now() / 1000 - event.created;
+  const MAX_EVENT_AGE_SECONDS = 5 * 60; // 5 minutes
+  
+  if (eventAge > MAX_EVENT_AGE_SECONDS) {
+    console.warn(
+      `[AUDIT PAYMENT] Webhook rejeté (trop ancien) | ` +
+      `Event: ${event.id} | Type: ${event.type} | Age: ${Math.round(eventAge)}s | IP: ${request.ip || "unknown"}`
+    );
+    return reply.code(400).send({
+      error: "Webhook trop ancien (replay protection)",
+    });
+  }
+
   try {
     // IDEMPOTENCE CRITIQUE : Utiliser INSERT directement (atomicité DB)
     // Protection contre race condition : UNIQUE constraint garantit qu'un seul webhook peut traiter l'événement

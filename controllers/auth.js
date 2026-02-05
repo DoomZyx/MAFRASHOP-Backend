@@ -3,31 +3,61 @@ import User from "../models/user.js";
 import { validateCompanyAsync } from "../middleware/auth.js";
 import BlacklistedToken from "../models/blacklistedTokens.js";
 import { generateJTI } from "../models/blacklistedTokens.js";
+import UserSession from "../models/userSessions.js";
 
 /**
  * Génère un access token (courte durée) et un refresh token (longue durée)
  * @param {string} userId - ID de l'utilisateur
+ * @param {string} [ipAddress] - Adresse IP (optionnel, pour tracking)
+ * @param {string} [userAgent] - User agent (optionnel, pour tracking)
  * @returns {Object} { accessToken, refreshToken, accessTokenExpiresIn }
  */
-const generateTokens = (userId) => {
+const generateTokens = async (userId, ipAddress = null, userAgent = null) => {
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET non configuré");
   }
 
   // Access token : 1 heure (sécurité renforcée)
-  const jti = generateJTI();
+  const accessJti = generateJTI();
+  const accessTokenExp = Math.floor(Date.now() / 1000) + 3600; // 1h
   const accessToken = jwt.sign(
-    { userId, jti, type: "access" },
+    { userId, jti: accessJti, type: "access" },
     process.env.JWT_SECRET,
     { expiresIn: "1h" }
   );
 
   // Refresh token : 7 jours (pour maintenir la session)
+  const refreshJti = generateJTI();
+  const refreshTokenExp = Math.floor(Date.now() / 1000) + 7 * 24 * 3600; // 7j
   const refreshToken = jwt.sign(
-    { userId, jti, type: "refresh" },
+    { userId, jti: refreshJti, type: "refresh" },
     process.env.JWT_SECRET,
     { expiresIn: "7d" }
   );
+
+  // Enregistrer les sessions dans la base de données
+  // Permet d'invalider tous les tokens d'un utilisateur si nécessaire
+  try {
+    await UserSession.create(
+      userId,
+      accessJti,
+      "access",
+      new Date(accessTokenExp * 1000),
+      ipAddress,
+      userAgent
+    );
+    await UserSession.create(
+      userId,
+      refreshJti,
+      "refresh",
+      new Date(refreshTokenExp * 1000),
+      ipAddress,
+      userAgent
+    );
+  } catch (error) {
+    // Si erreur d'enregistrement session, on continue quand même (tokens valides)
+    console.warn(`[AUDIT AUTH] Erreur enregistrement session:`, error.message);
+  }
 
   return {
     accessToken,
@@ -40,8 +70,8 @@ const generateTokens = (userId) => {
  * Génère uniquement un access token (pour compatibilité)
  * @deprecated Utiliser generateTokens à la place
  */
-const generateToken = (userId) => {
-  const { accessToken } = generateTokens(userId);
+const generateToken = async (userId) => {
+  const { accessToken } = await generateTokens(userId);
   return accessToken;
 };
 
@@ -72,7 +102,7 @@ export const register = async (request, reply) => {
       authProvider: "local",
     });
 
-    const tokens = generateTokens(user.id);
+    const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
 
     reply.type("application/json");
     reply.send({
@@ -129,7 +159,7 @@ export const login = async (request, reply) => {
       });
     }
 
-    const tokens = generateTokens(user.id);
+    const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
 
     reply.type("application/json");
     reply.send({
@@ -249,7 +279,7 @@ export const googleCallback = async (request, reply) => {
       }
     }
 
-    const tokens = generateTokens(user.id);
+    const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
 
     reply.type("application/json");
     reply.send({
@@ -314,7 +344,7 @@ export const adminLogin = async (request, reply) => {
       });
     }
 
-    const tokens = generateTokens(user.id);
+    const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
 
     reply.type("application/json");
     reply.send({
@@ -433,7 +463,7 @@ export const adminGoogleCallback = async (request, reply) => {
       user = await User.findById(user.id);
     }
 
-    const tokens = generateTokens(user.id);
+    const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
 
     reply.type("application/json");
     reply.send({
@@ -626,8 +656,24 @@ export const refreshToken = async (request, reply) => {
       });
     }
 
-    // Générer de nouveaux tokens
-    const tokens = generateTokens(user.id);
+    // 🔐 ROTATION REFRESH TOKEN (CRITIQUE) : Blacklister l'ancien refresh token
+    // Protection contre vol de refresh token : même si volé, il devient inutilisable après premier refresh
+    if (decoded.jti && decoded.exp) {
+      const expiresAt = new Date(decoded.exp * 1000);
+      await BlacklistedToken.blacklist(
+        decoded.jti,
+        decoded.userId,
+        expiresAt,
+        "refresh_rotation"
+      );
+      console.log(
+        `[AUDIT AUTH] Refresh token roté (ancien blacklisté) | ` +
+        `UserId: ${decoded.userId} | JTI: ${decoded.jti} | IP: ${request.ip || "unknown"}`
+      );
+    }
+
+    // Générer de nouveaux tokens (avec nouveau JTI)
+    const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
 
     reply.type("application/json");
     reply.send({

@@ -1,22 +1,26 @@
 import pool from "../db.js";
 
 /**
- * Script pour expirer les commandes pending de plus de 24h
+ * Script pour expirer les commandes pending de plus de 48h
  * À exécuter via cron job quotidiennement
  * 
- * Usage: node backend/script/expirePendingOrders.js
+ * Usage: node backend/utils/expirePendingOrders.js
+ * 
+ * Délai configurable via variable d'environnement ORDER_EXPIRATION_HOURS (défaut: 48)
  */
 async function expirePendingOrders() {
+  const EXPIRATION_DELAY_HOURS = parseInt(process.env.ORDER_EXPIRATION_HOURS || "48", 10);
+  
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    // Trouver les commandes pending de plus de 24h
+    // Trouver les commandes pending de plus de X heures (défaut: 48h)
     const result = await client.query(
       `UPDATE orders 
        SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
        WHERE status = 'pending' 
-       AND created_at < NOW() - INTERVAL '48 hours'
+       AND created_at < NOW() - INTERVAL '${EXPIRATION_DELAY_HOURS} hours'
        RETURNING id, user_id, created_at`
     );
 

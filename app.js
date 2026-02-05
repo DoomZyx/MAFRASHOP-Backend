@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import pool from "./db.js";
 import productsRoutes from "./routes/products.js";
 import authRoutes from "./routes/auth.js";
@@ -15,6 +16,7 @@ import adminStockRoutes from "./routes/admin/stock.js";
 import adminStatsRoutes from "./routes/admin/stats.js";
 import adminOrdersRoutes from "./routes/admin/orders.js";
 import adminInvoicesRoutes from "./routes/admin/invoices.js";
+import adminUploadRoutes from "./routes/admin/upload.js";
 import contactRoutes from "./routes/contact.js";
 import { sendToUser } from "./routes/websocket.js";
 
@@ -70,6 +72,50 @@ await fastify.register(cors, {
   credentials: true,
 });
 
+// Enregistrer multipart pour l'upload de fichiers
+await fastify.register(multipart, {
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB max
+  },
+});
+
+// Headers de sécurité pour protéger contre XSS et autres attaques
+fastify.addHook("onRequest", async (request, reply) => {
+  // Content Security Policy : empêche l'exécution de scripts non autorisés
+  reply.header("Content-Security-Policy", 
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: https:; " +
+    "font-src 'self' data:; " +
+    "connect-src 'self' https://api.insee.fr https://api.stripe.com https://oauth2.googleapis.com https://www.googleapis.com wss: ws:; " +
+    "frame-src 'self' https://js.stripe.com; " +
+    "object-src 'none'; " +
+    "base-uri 'self'; " +
+    "form-action 'self';"
+  );
+  
+  // XSS Protection (navigateurs anciens)
+  reply.header("X-XSS-Protection", "1; mode=block");
+  
+  // Empêcher le site d'être intégré dans une iframe (protection clickjacking)
+  reply.header("X-Frame-Options", "DENY");
+  
+  // Empêcher le navigateur de deviner le type MIME
+  reply.header("X-Content-Type-Options", "nosniff");
+  
+  // Referrer Policy : limiter les informations envoyées dans le referrer
+  reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+  
+  // Permissions Policy : désactiver certaines fonctionnalités
+  reply.header("Permissions-Policy", 
+    "geolocation=(), " +
+    "microphone=(), " +
+    "camera=(), " +
+    "payment=()"
+  );
+});
+
 // Hook pour définir le Content-Type JSON par défaut
 fastify.addHook("onSend", async (request, reply, payload) => {
   if (typeof payload === "object") {
@@ -106,6 +152,7 @@ fastify.register(adminStockRoutes);
 fastify.register(adminStatsRoutes);
 fastify.register(adminOrdersRoutes);
 fastify.register(adminInvoicesRoutes);
+fastify.register(adminUploadRoutes);
 fastify.register(contactRoutes);
 
 // Initialiser la connexion à la base de données

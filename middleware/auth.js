@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import User from "../models/user.js";
 import { verifySiretAndCompanyName } from "../API/insee.js";
 import BlacklistedToken from "../models/blacklistedTokens.js";
+import UserSession from "../models/userSessions.js";
 
 /**
  * Journaliser un échec d'authentification pour audit sécurité
@@ -87,6 +88,22 @@ export const verifyToken = async (request, reply) => {
         return reply.code(401).send({ 
           success: false, 
           message: "Token révoqué" 
+        });
+      }
+
+      // VÉRIFICATION SESSION : Vérifier si la session est active
+      // Protection contre invalidation complète (changement password/email)
+      const isSessionActive = await UserSession.isActive(decoded.jti);
+      if (!isSessionActive) {
+        logAuthFailure("Session invalidée", { 
+          ip: clientIp, 
+          path: request.url,
+          userId: decoded.userId,
+          jti: decoded.jti
+        });
+        return reply.code(401).send({ 
+          success: false, 
+          message: "Session invalidée. Veuillez vous reconnecter." 
         });
       }
     }
