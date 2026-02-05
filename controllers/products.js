@@ -128,3 +128,28 @@ export const updatePromotionStatus = async (request, reply) => {
     return reply.status(500).send({ message: "Erreur serveur" });
   }
 };
+
+export const getCategories = async (request, reply) => {
+  try {
+    const categories = await Products.getDistinctCategories();
+    reply.type("application/json");
+    return reply.status(200).send(categories);
+  } catch (err) {
+    console.error("Erreur lors de la récupération des catégories:", err);
+    reply.type("application/json");
+    return reply.status(500).send({ message: "Erreur serveur" });
+  }
+};
+
+export const getSubcategories = async (request, reply) => {
+  try {
+    const { category } = request.query;
+    const subcategories = await Products.getDistinctSubcategories(category || null);
+    reply.type("application/json");
+    return reply.status(200).send(subcategories);
+  } catch (err) {
+    console.error("Erreur lors de la récupération des sous-catégories:", err);
+    reply.type("application/json");
+    return reply.status(500).send({ message: "Erreur serveur" });
+  }
+};

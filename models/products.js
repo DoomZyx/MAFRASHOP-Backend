@@ -342,6 +342,37 @@ class Product {
   }
 
   /**
+   * Récupérer toutes les catégories distinctes
+   * @returns {Array<string>} Liste des catégories uniques
+   */
+  static async getDistinctCategories() {
+    const result = await pool.query(
+      "SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != '' ORDER BY category"
+    );
+    return result.rows.map(row => row.category);
+  }
+
+  /**
+   * Récupérer toutes les sous-catégories distinctes pour une catégorie donnée
+   * @param {string} category - Catégorie pour laquelle récupérer les sous-catégories
+   * @returns {Array<string>} Liste des sous-catégories uniques
+   */
+  static async getDistinctSubcategories(category = null) {
+    let query = "SELECT DISTINCT subcategory FROM products WHERE subcategory IS NOT NULL AND subcategory != ''";
+    const params = [];
+    
+    if (category) {
+      query += " AND category = $1";
+      params.push(category);
+    }
+    
+    query += " ORDER BY subcategory";
+    
+    const result = await pool.query(query, params);
+    return result.rows.map(row => row.subcategory);
+  }
+
+  /**
    * Décrémenter le stock de plusieurs produits dans une transaction
    * Protection contre état incohérent si un produit échoue
    * @param {Array} items - Array de {productId, quantity}
