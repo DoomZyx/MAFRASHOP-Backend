@@ -8,6 +8,7 @@ module.exports = {
      env: {
        NODE_ENV: "preprod", 
        PORT: 3001,
+       ADDRESS: process.env.ADDRESS,
        FRONTEND_URL: process.env.FRONTEND_URL,
        DATABASE_URL: process.env.DATABASE_URL,
        SUPABASE_URL: process.env.SUPABASE_URL,
