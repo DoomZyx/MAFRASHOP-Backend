@@ -42,31 +42,22 @@ const fastify = Fastify({
 });
 
 // Parser CORS_ORIGINS
-const corsOrigins = process.env.CORS_ORIGINS 
+const corsOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map(o => o.trim())
   : ["http://localhost:5173", "http://192.168.1.14:5173", "http://172.31.112.1:5173"];
 
 // Enregistrer CORS
 await fastify.register(cors, {
   origin: (origin, cb) => {
-    const allowedOrigins = corsOrigins;
+    // Autorise Postman / curl / server-side requests
+    if (!origin) return cb(null, true);
 
-    if (!origin) {
-      cb(null, true);
-      return;
+    if (corsOrigins.includes(origin)) {
+      return cb(null, true);
     }
 
-    const isAllowed = allowedOrigins.some((allowed) => {
-      if (typeof allowed === "string") return allowed === origin;
-      return allowed.test(origin);
-    });
-
-    if (isAllowed) {
-      cb(null, true);
-    } else {
-      console.warn(`CORS: Origine non autorisée: ${origin}`);
-      cb(new Error("Not allowed by CORS"), false);
-    }
+    console.warn("CORS bloqué pour :", origin);
+    return cb(new Error("Not allowed by CORS"), false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
