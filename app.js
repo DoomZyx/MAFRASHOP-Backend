@@ -51,10 +51,16 @@ const normalizeOrigin = (url) => {
   if (!url) return url;
   try {
     const urlObj = new URL(url);
-    urlObj.pathname = urlObj.pathname.replace(/\/$/, ''); // Supprimer trailing slash
-    return urlObj.toString();
+    // Reconstruire l'URL sans trailing slash : protocol + host + port (sans pathname)
+    let normalized = `${urlObj.protocol}//${urlObj.host}`;
+    // Si le pathname existe et n'est pas juste "/", l'ajouter sans trailing slash
+    if (urlObj.pathname && urlObj.pathname !== '/') {
+      normalized += urlObj.pathname.replace(/\/$/, '');
+    }
+    return normalized;
   } catch {
-    return url.replace(/\/$/, ''); // Fallback simple si URL invalide
+    // Fallback simple si URL invalide : supprimer trailing slash
+    return url.replace(/\/$/, '');
   }
 };
 
@@ -63,7 +69,8 @@ const normalizedCorsOrigins = corsOrigins.map(normalizeOrigin);
 if (!process.env.CORS_ORIGINS) {
   console.warn("⚠️  CORS_ORIGINS non défini dans les variables d'environnement - aucune origine autorisée par défaut");
 } else {
-  console.log("✅ Origines CORS autorisées:", normalizedCorsOrigins);
+  console.log("✅ Origines CORS autorisées (brutes):", corsOrigins);
+  console.log("✅ Origines CORS autorisées (normalisées):", normalizedCorsOrigins);
 }
 
 // Enregistrer CORS
