@@ -4,14 +4,14 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
+User=deploy
 Group=www-data
 WorkingDirectory=/var/www/preprod/backend
 Environment=NODE_ENV=preprod
 EnvironmentFile=/var/www/preprod/backend/.env.preprod
-ExecStart=/usr/bin/node server.js
-Restart=on-failure
-RestartSec=5
+ExecStart=/usr/bin/node /var/www/preprod/backend/server.js
+Restart=always
+RestartSec=3
 StandardOutput=journal
 StandardError=journal
 
