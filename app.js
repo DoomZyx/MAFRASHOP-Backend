@@ -44,7 +44,11 @@ const fastify = Fastify({
 // Parser CORS_ORIGINS
 const corsOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map(o => o.trim())
-  : ["http://localhost:5173", "http://192.168.1.14:5173", "http://172.31.112.1:5173"];
+  : [];
+
+if (!process.env.CORS_ORIGINS) {
+  console.warn("⚠️  CORS_ORIGINS non défini dans les variables d'environnement - aucune origine autorisée par défaut");
+}
 
 // Enregistrer CORS
 await fastify.register(cors, {
