@@ -1,3 +1,4 @@
+import './loadEnv.js';
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
@@ -19,7 +20,6 @@ import adminInvoicesRoutes from "./routes/admin/invoices.js";
 import adminUploadRoutes from "./routes/admin/upload.js";
 import contactRoutes from "./routes/contact.js";
 import { sendToUser } from "./routes/websocket.js";
-import './loadEnv.js';
 
 export { sendToUser };
 
