@@ -63,9 +63,38 @@ class Cart {
   }
 
   // Vérifier si l'utilisateur a une commande pending (panier verrouillé)
+  // Annule automatiquement les commandes pending expirées (> 30 minutes)
   static async hasPendingOrder(userId) {
     const pendingOrders = await Order.findPendingByUserId(userId);
-    return pendingOrders.length > 0;
+    
+    if (pendingOrders.length === 0) {
+      return false;
+    }
+    
+    // Annuler les commandes pending expirées (créées il y a plus de 30 minutes)
+    const now = new Date();
+    const expirationTime = 30 * 60 * 1000; // 30 minutes en millisecondes
+    
+    for (const order of pendingOrders) {
+      if (!order || !order.createdAt) continue;
+      
+      const orderDate = new Date(order.createdAt);
+      const timeDiff = now.getTime() - orderDate.getTime();
+      
+      // Si la commande a plus de 30 minutes, l'annuler
+      if (timeDiff > expirationTime) {
+        console.log(`Annulation automatique de la commande pending expirée #${order.id} (créée il y a ${Math.round(timeDiff / 60000)} minutes)`);
+        try {
+          await Order.updateStatus(order.id, "cancelled");
+        } catch (error) {
+          console.error(`Erreur lors de l'annulation de la commande #${order.id}:`, error);
+        }
+      }
+    }
+    
+    // Vérifier à nouveau après nettoyage
+    const remainingPendingOrders = await Order.findPendingByUserId(userId);
+    return remainingPendingOrders.length > 0;
   }
 
   // Ajouter un produit au panier
