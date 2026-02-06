@@ -356,8 +356,34 @@ export const stripeWebhook = async (request, reply) => {
         }
 
         try {
-          // Récupérer les données depuis les métadonnées Stripe
+          // ============================================
+          // VALIDATION 1 : Récupérer et valider les métadonnées
+          // ============================================
           const userId = parseInt(session.metadata.userId, 10);
+          if (!userId || isNaN(userId)) {
+            console.error(
+              `[WEBHOOK VALIDATION] userId invalide dans métadonnées pour session ${session.id}: ${session.metadata.userId}`
+            );
+            await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+            return reply.code(400).send({ 
+              received: true, 
+              error: "userId invalide dans métadonnées" 
+            });
+          }
+
+          // Vérifier que l'utilisateur existe
+          const userCheck = await pool.query("SELECT id FROM users WHERE id = $1", [userId]);
+          if (userCheck.rows.length === 0) {
+            console.error(
+              `[WEBHOOK VALIDATION] Utilisateur ${userId} introuvable pour session ${session.id} (event ${event.id})`
+            );
+            await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+            return reply.code(400).send({ 
+              received: true, 
+              error: `Utilisateur ${userId} introuvable` 
+            });
+          }
+
           const isPro = session.metadata.isPro === "true";
           const totalAmount = parseFloat(session.metadata.totalAmount);
           const totalAmountHT = parseFloat(session.metadata.totalAmountHT);
@@ -374,14 +400,129 @@ export const stripeWebhook = async (request, reply) => {
               } : null);
           const orderItems = JSON.parse(session.metadata.orderItems || "[]");
 
-          // Créer la commande avec statut "paid" directement (paiement déjà validé)
+          // ============================================
+          // VALIDATION 2 : Vérifier le montant total (totalAmount)
+          // ============================================
+          const stripeAmountTotal = session.amount_total; // Montant total en centimes depuis Stripe
+          const expectedAmountInCents = expectedAmount;
+
+          if (expectedAmountInCents === null || expectedAmountInCents === undefined || isNaN(expectedAmountInCents)) {
+            console.error(
+              `[WEBHOOK VALIDATION] expectedAmount invalide pour session ${session.id}: ${expectedAmount}`
+            );
+            await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+            return reply.code(400).send({ 
+              received: true, 
+              error: "expectedAmount invalide dans métadonnées" 
+            });
+          }
+
+          // Vérifier que le montant Stripe correspond au montant attendu
+          const amountDifference = Math.abs((stripeAmountTotal || 0) - expectedAmountInCents);
+          const climateTolerance = Math.ceil(expectedAmountInCents * 0.005); // 0.5% pour Stripe Climate
+          const roundingTolerance = isPro ? 5 : 1;
+          const tolerance = climateTolerance + roundingTolerance;
+
+          if (amountDifference > tolerance) {
+            console.error(
+              `[WEBHOOK VALIDATION] Incohérence de montant pour session ${session.id}: ` +
+              `Stripe=${stripeAmountTotal} centimes, Attendu=${expectedAmountInCents} centimes, ` +
+              `Différence=${amountDifference}, Tolérance=${tolerance}, isPro=${isPro}, Event=${event.id}`
+            );
+            await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+            return reply.code(400).send({ 
+              received: true, 
+              error: "Incohérence de montant détectée",
+              stripeAmount: stripeAmountTotal,
+              expectedAmount: expectedAmountInCents,
+              difference: amountDifference,
+              tolerance,
+            });
+          }
+
+          // Log si différence dans la tolérance (pour monitoring)
+          if (amountDifference > 0) {
+            console.log(
+              `[WEBHOOK VALIDATION] Différence de montant acceptée (dans tolérance) pour session ${session.id}: ` +
+              `Différence=${amountDifference} centimes, Tolérance=${tolerance}, isPro=${isPro}`
+            );
+          }
+
+          // ============================================
+          // VALIDATION 3 : Vérifier le stock avant de créer la commande
+          // ============================================
+          const stockIssues = [];
+          for (const item of orderItems) {
+            if (!item || !item.productId) {
+              stockIssues.push({
+                item,
+                reason: "Item invalide (productId manquant)",
+              });
+              continue;
+            }
+
+            const product = await Product.findById(item.productId);
+            if (!product) {
+              stockIssues.push({
+                productId: item.productId,
+                reason: "Produit introuvable",
+              });
+              continue;
+            }
+
+            if (product.stockQuantity < item.quantity) {
+              stockIssues.push({
+                productId: item.productId,
+                productName: product.nom || "Produit inconnu",
+                availableStock: product.stockQuantity,
+                requestedQuantity: item.quantity,
+                reason: "Stock insuffisant",
+              });
+            }
+          }
+
+          if (stockIssues.length > 0) {
+            console.error(
+              `[WEBHOOK VALIDATION] Stock insuffisant pour session ${session.id} (event ${event.id}):`,
+              stockIssues
+            );
+            // Ne pas créer la commande si le stock est insuffisant
+            // Le paiement a déjà été effectué, il faudra un refund manuel
+            await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+            return reply.code(400).send({ 
+              received: true, 
+              error: "Stock insuffisant pour certains produits",
+              stockIssues,
+              // TODO: Notifier l'admin pour refund manuel
+            });
+          }
+
+          // ============================================
+          // LOGS : Historique complet avant création
+          // ============================================
+          console.log(
+            `[WEBHOOK] Création de commande pour session ${session.id} (event ${event.id}):\n` +
+            `  - userId: ${userId}\n` +
+            `  - isPro: ${isPro}\n` +
+            `  - totalAmount: ${totalAmount}€\n` +
+            `  - totalAmountHT: ${totalAmountHT}€\n` +
+            `  - expectedAmount: ${expectedAmountInCents} centimes\n` +
+            `  - stripeAmountTotal: ${stripeAmountTotal} centimes\n` +
+            `  - deliveryFee: ${deliveryFee}€\n` +
+            `  - items: ${orderItems.length} produit(s)\n` +
+            `  - payment_intent: ${session.payment_intent || "N/A"}`
+          );
+
+          // ============================================
+          // CRÉATION DE LA COMMANDE
+          // ============================================
           order = await Order.create({
             userId,
             stripeSessionId: session.id,
             status: "paid",
             totalAmount,
             totalAmountHT,
-            expectedAmount,
+            expectedAmount: expectedAmountInCents,
             deliveryFee,
             isPro,
             shippingAddress,
@@ -393,7 +534,9 @@ export const stripeWebhook = async (request, reply) => {
             await Order.updatePaymentIntent(order.id, session.payment_intent);
           }
 
-          console.log(`Commande ${order.id} créée depuis webhook Stripe pour session ${session.id}`);
+          console.log(
+            `[WEBHOOK] ✅ Commande ${order.id} créée avec succès depuis webhook Stripe pour session ${session.id}`
+          );
         } catch (createError) {
           console.error(`Erreur lors de la création de la commande depuis webhook:`, createError);
           await StripeWebhookEvent.markAsOrphan(event.id, event.type);
