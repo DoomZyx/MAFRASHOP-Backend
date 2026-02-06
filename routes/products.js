@@ -18,7 +18,4 @@ export default async function productsRoutes(fastify) {
   fastify.patch("/products/:id/promotion", updatePromotionStatus);
   fastify.get("/products/categories/all", getCategories);
   fastify.get("/products/subcategories/all", getSubcategories);
-  // fastify.post("/products", createProduct);
-  // fastify.put("/products/:id", updateProduct);
-  // fastify.delete("/products/:id", deleteProduct);
 }

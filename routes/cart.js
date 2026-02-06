@@ -8,17 +8,17 @@ import {
 import { verifyToken } from "../middleware/auth.js";
 
 export default async function cartRoutes(fastify, options) {
-  fastify.get("/api/cart", { preHandler: verifyToken }, getCart);
+  fastify.get("/cart", { preHandler: verifyToken }, getCart);
 
-  fastify.post("/api/cart", { preHandler: verifyToken }, addToCart);
+  fastify.post("/cart", { preHandler: verifyToken }, addToCart);
 
-  fastify.put("/api/cart/:productId", { preHandler: verifyToken }, updateCartItem);
+  fastify.put("/cart/:productId", { preHandler: verifyToken }, updateCartItem);
 
-  fastify.delete("/api/cart/:productId", {
+  fastify.delete("/cart/:productId", {
     preHandler: verifyToken,
     handler: removeFromCart,
   });
 
-  fastify.delete("/api/cart", { preHandler: verifyToken }, clearCart);
+  fastify.delete("/cart", { preHandler: verifyToken }, clearCart);
 }
 

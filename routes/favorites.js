@@ -6,11 +6,11 @@ import {
 import { verifyToken } from "../middleware/auth.js";
 
 export default async function favoritesRoutes(fastify, options) {
-  fastify.get("/api/favorites", { preHandler: verifyToken }, getFavorites);
+  fastify.get("/favorites", { preHandler: verifyToken }, getFavorites);
 
-  fastify.post("/api/favorites", { preHandler: verifyToken }, addToFavorites);
+  fastify.post("/favorites", { preHandler: verifyToken }, addToFavorites);
 
-  fastify.delete("/api/favorites/:productId", {
+  fastify.delete("/favorites/:productId", {
     preHandler: verifyToken,
     handler: removeFromFavorites,
   });

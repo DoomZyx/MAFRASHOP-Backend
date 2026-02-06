@@ -5,7 +5,7 @@ import { convertToWebP, generateWebPFileName } from "../../utils/imageConverter.
 export default async function uploadRoutes(fastify, options) {
   // Upload d'image (admin seulement)
   fastify.post(
-    "/api/admin/upload/image",
+    "/admin/upload/image",
     { preHandler: verifyToken },
     async (request, reply) => {
       try {

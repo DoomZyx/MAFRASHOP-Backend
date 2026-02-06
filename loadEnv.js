@@ -35,8 +35,8 @@ if (!existsSync(envPath)) {
 } else {
   const result = dotenv.config({ path: envPath });
   if (result.error) {
-    console.error(`❌ Erreur lors du chargement de ${envFile}:`, result.error);
+    console.error(`Erreur lors du chargement de ${envFile}:`, result.error);
   } else {
-    console.log(`✅ Variables d'environnement chargées depuis ${envFile}`);
+    console.log(`Variables d'environnement chargées depuis ${envFile}`);
   }
 }

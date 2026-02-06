@@ -5,7 +5,7 @@ import { sendContactEmail } from "../controllers/contact.js";
  */
 async function contactRoutes(fastify, options) {
   // Envoyer un email de contact
-  fastify.post("/api/contact", {
+  fastify.post("/contact", {
     schema: {
       description: "Envoyer un message de contact depuis le formulaire SAV",
       tags: ["contact"],
