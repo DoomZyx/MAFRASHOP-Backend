@@ -178,25 +178,23 @@ fastify.setErrorHandler((error, request, reply) => {
   });
 });
 
-// Enregistrer les routes avec le préfixe /api
-fastify.register(async function (fastify) {
-  fastify.register(productsRoutes);
-  fastify.register(authRoutes);
-  fastify.register(cartRoutes);
-  fastify.register(favoritesRoutes);
-  fastify.register(websocketRoutes);
-  fastify.register(paymentRoutes);
-  fastify.register(ordersRoutes);
-  fastify.register(invoicesRoutes);
-  fastify.register(deliveriesRoutes);
-  fastify.register(adminProductsRoutes);
-  fastify.register(adminStockRoutes);
-  fastify.register(adminStatsRoutes);
-  fastify.register(adminOrdersRoutes);
-  fastify.register(adminInvoicesRoutes);
-  fastify.register(adminUploadRoutes);
-  fastify.register(contactRoutes);
-}, { prefix: '/api' });
+// Enregistrer les routes (sans préfixe /api car Nginx le gère déjà)
+fastify.register(productsRoutes);
+fastify.register(authRoutes);
+fastify.register(cartRoutes);
+fastify.register(favoritesRoutes);
+fastify.register(websocketRoutes);
+fastify.register(paymentRoutes);
+fastify.register(ordersRoutes);
+fastify.register(invoicesRoutes);
+fastify.register(deliveriesRoutes);
+fastify.register(adminProductsRoutes);
+fastify.register(adminStockRoutes);
+fastify.register(adminStatsRoutes);
+fastify.register(adminOrdersRoutes);
+fastify.register(adminInvoicesRoutes);
+fastify.register(adminUploadRoutes);
+fastify.register(contactRoutes);
 
 // Initialiser la connexion à la base de données
 await connectDB();
