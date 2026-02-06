@@ -1,9 +1,6 @@
 import pool from "../db.js";
 import Product from "./products.js";
 import Order from "./orders.js";
-import Stripe from "stripe";
-
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 // Mapper les données du panier avec les produits (JOIN)
 const mapCartItem = (row) => {
@@ -65,54 +62,10 @@ class Cart {
     return result.rows[0] || null;
   }
 
-  // Vérifier si l'utilisateur a une commande pending (panier verrouillé)
-  // Annule automatiquement les commandes pending si la session Stripe est expirée ou annulée
+  // Plus de vérification de commande pending : les commandes sont créées uniquement après paiement
+  // Le panier n'est jamais verrouillé
   static async hasPendingOrder(userId) {
-    const pendingOrders = await Order.findPendingByUserId(userId);
-    
-    if (pendingOrders.length === 0) {
-      return false;
-    }
-    
-    // Vérifier le statut de chaque session Stripe et annuler si expirée/annulée
-    for (const order of pendingOrders) {
-      if (!order) continue;
-      
-      // Si la commande a une session Stripe, vérifier son statut
-      if (order.stripeSessionId && stripe) {
-        try {
-          const session = await stripe.checkout.sessions.retrieve(order.stripeSessionId);
-          
-          // Si la session est expirée, annulée ou complétée (mais pas payée), annuler la commande
-          if (
-            session.status === "expired" ||
-            (session.expires_at && session.expires_at * 1000 < Date.now()) ||
-            (session.payment_status === "unpaid" && session.status !== "open")
-          ) {
-            console.log(`Annulation automatique de la commande pending #${order.id} (session Stripe expirée/annulée)`);
-            await Order.updateStatus(order.id, "cancelled");
-            continue;
-          }
-          
-          // Si la session est toujours ouverte, la commande est valide
-          if (session.status === "open") {
-            continue;
-          }
-        } catch (error) {
-          // Si la session n'existe plus ou erreur Stripe, annuler la commande
-          console.log(`Annulation automatique de la commande pending #${order.id} (session Stripe invalide: ${error.message})`);
-          await Order.updateStatus(order.id, "cancelled");
-        }
-      } else {
-        // Si pas de session Stripe, annuler la commande (orpheline)
-        console.log(`Annulation automatique de la commande pending #${order.id} (pas de session Stripe)`);
-        await Order.updateStatus(order.id, "cancelled");
-      }
-    }
-    
-    // Vérifier à nouveau après nettoyage
-    const remainingPendingOrders = await Order.findPendingByUserId(userId);
-    return remainingPendingOrders.length > 0;
+    return false;
   }
 
   // Ajouter un produit au panier

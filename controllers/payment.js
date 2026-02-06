@@ -116,53 +116,7 @@ export const createCheckoutSession = async (request, reply) => {
     const { shippingAddress: rawShippingAddress } = request.body;
     const isPro = request.user.isPro || false;
 
-    // IDEMPOTENCE : Vérifier s'il existe déjà une commande pending pour cet utilisateur
-    // Évite la création de multiples sessions pour le même panier
-    const existingPendingOrders = await Order.findPendingByUserId(userId);
-    if (existingPendingOrders.length > 0) {
-      // Si une commande pending existe avec une session Stripe, réutiliser la session
-      const orderWithSession = existingPendingOrders.find(
-        (o) => o && o.stripeSessionId !== null
-      );
-      
-      if (orderWithSession && orderWithSession.stripeSessionId) {
-        try {
-          // Vérifier que la session Stripe existe toujours et est valide
-          const existingSession = await stripe.checkout.sessions.retrieve(
-            orderWithSession.stripeSessionId
-          );
-          
-          // Si la session est toujours ouverte (expired_at dans le futur ou null)
-          if (
-            !existingSession.expires_at ||
-            existingSession.expires_at * 1000 > Date.now()
-          ) {
-            return reply.send({
-              success: true,
-              data: {
-                sessionId: existingSession.id,
-                url: existingSession.url,
-                orderId: orderWithSession.id,
-                reused: true,
-              },
-            });
-          }
-        } catch (stripeError) {
-          // Session invalide ou expirée, on continue pour créer une nouvelle
-          console.warn(
-            `Session Stripe ${orderWithSession.stripeSessionId} invalide, création nouvelle session`
-          );
-        }
-      }
-      
-      // Si pas de session valide, annuler les commandes pending orphelines
-      // (elles seront recréées avec la nouvelle session)
-      for (const pendingOrder of existingPendingOrders) {
-        if (pendingOrder && !pendingOrder.stripeSessionId) {
-          await Order.updateStatus(pendingOrder.id, "cancelled");
-        }
-      }
-    }
+    // Plus de vérification de commandes pending : on ne crée la commande qu'après paiement
 
     // Valider et sanitizer l'adresse de livraison
     const shippingAddress = validateShippingAddress(rawShippingAddress);
@@ -269,32 +223,17 @@ export const createCheckoutSession = async (request, reply) => {
       });
     }
 
-    // Créer la commande EN BASE AVANT la redirection Stripe
-    // On stocke le snapshot des items, les frais de livraison et le montant attendu
-    // totalAmount = sous-total TTC + frais de livraison ; totalAmountHT = HT pour stats exactes
-    const order = await Order.create({
-      userId,
-      stripeSessionId: null,
-      status: "pending",
-      totalAmount: totalWithDelivery,
-      totalAmountHT,
-      expectedAmount: totalInCentsWithDelivery,
-      deliveryFee,
-      isPro,
-      shippingAddress: shippingAddress || null,
-      items: cartCalculation.items.map(item => ({
-        productId: item.productId,
-        quantity: item.quantity,
-        unitPrice: item.unitPriceHT, // Prix unitaire HT en euros (toujours stocké en HT)
-        totalPrice: item.totalPriceHT, // Total HT en euros (toujours stocké en HT)
-      })),
-    });
-
-    if (!order || !order.id) {
-      throw new Error("Erreur lors de la création de la commande");
-    }
+    // Préparer les données du panier pour les métadonnées Stripe
+    // (nécessaire pour recréer la commande dans le webhook après paiement)
+    const orderItems = cartCalculation.items.map(item => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      unitPrice: item.unitPriceHT, // Prix unitaire HT en euros
+      totalPrice: item.totalPriceHT, // Total HT en euros
+    }));
 
     // Créer la session Stripe Checkout
+    // La commande sera créée uniquement après validation du paiement via webhook
     // automatic_tax désactivé : les prix sont déjà calculés côté backend (TTC pour tous)
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -306,16 +245,19 @@ export const createCheckoutSession = async (request, reply) => {
       customer_email: request.user.email,
       metadata: {
         userId: userId.toString(),
-        orderId: order.id.toString(),
+        isPro: isPro.toString(),
+        totalAmount: totalWithDelivery.toString(),
+        totalAmountHT: totalAmountHT.toString(),
+        expectedAmount: totalInCentsWithDelivery.toString(),
+        deliveryFee: deliveryFee.toString(),
+        vatRate: vatRate.toString(),
+        shippingAddress: shippingAddress ? JSON.stringify(shippingAddress) : "",
+        orderItems: JSON.stringify(orderItems),
       },
       shipping_address_collection: {
         allowed_countries: ["FR", "BE", "CH", "LU"],
       },
     });
-    
-
-    // Mettre à jour l'Order avec le stripeSessionId
-    await Order.updateStripeSessionId(order.id, session.id);
 
     reply.type("application/json");
     return reply.send({
@@ -323,7 +265,6 @@ export const createCheckoutSession = async (request, reply) => {
       data: {
         sessionId: session.id,
         url: session.url,
-        orderId: order.id,
       },
     });
   } catch (error) {
@@ -402,15 +343,65 @@ export const stripeWebhook = async (request, reply) => {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 
-      // Trouver la commande par session ID AVANT de marquer l'événement
-      const order = await Order.findByStripeSessionId(session.id);
+      // Vérifier si une commande existe déjà (idempotence)
+      let order = await Order.findByStripeSessionId(session.id);
 
+      // Si la commande n'existe pas, la créer à partir des métadonnées Stripe
       if (!order) {
-        console.error(`Commande non trouvée pour la session ${session.id} (event ${event.id})`);
-        // Marquer comme orphelin (pas traité) pour permettre retry si commande créée avec retard
-        await StripeWebhookEvent.markAsOrphan(event.id, event.type);
-        // Retourner 200 pour éviter retry immédiat Stripe, mais garder possibilité de retry manuel
-        return reply.send({ received: true, orphan: true });
+        // Vérifier que les métadonnées nécessaires sont présentes
+        if (!session.metadata || !session.metadata.userId) {
+          console.error(`Métadonnées manquantes pour la session ${session.id} (event ${event.id})`);
+          await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+          return reply.send({ received: true, orphan: true });
+        }
+
+        try {
+          // Récupérer les données depuis les métadonnées Stripe
+          const userId = parseInt(session.metadata.userId, 10);
+          const isPro = session.metadata.isPro === "true";
+          const totalAmount = parseFloat(session.metadata.totalAmount);
+          const totalAmountHT = parseFloat(session.metadata.totalAmountHT);
+          const expectedAmount = parseInt(session.metadata.expectedAmount, 10);
+          const deliveryFee = parseFloat(session.metadata.deliveryFee || "0");
+          const shippingAddress = session.metadata.shippingAddress 
+            ? JSON.parse(session.metadata.shippingAddress) 
+            : (session.shipping_details?.address ? {
+                line1: session.shipping_details.address.line1,
+                line2: session.shipping_details.address.line2 || null,
+                city: session.shipping_details.address.city,
+                postal_code: session.shipping_details.address.postal_code,
+                country: session.shipping_details.address.country,
+              } : null);
+          const orderItems = JSON.parse(session.metadata.orderItems || "[]");
+
+          // Créer la commande avec statut "paid" directement (paiement déjà validé)
+          order = await Order.create({
+            userId,
+            stripeSessionId: session.id,
+            status: "paid",
+            totalAmount,
+            totalAmountHT,
+            expectedAmount,
+            deliveryFee,
+            isPro,
+            shippingAddress,
+            items: orderItems,
+          });
+
+          // Mettre à jour avec le Payment Intent si disponible
+          if (session.payment_intent) {
+            await Order.updatePaymentIntent(order.id, session.payment_intent);
+          }
+
+          console.log(`Commande ${order.id} créée depuis webhook Stripe pour session ${session.id}`);
+        } catch (createError) {
+          console.error(`Erreur lors de la création de la commande depuis webhook:`, createError);
+          await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+          return reply.code(500).send({ 
+            received: true, 
+            error: "Erreur lors de la création de la commande" 
+          });
+        }
       }
 
       // Tenter de marquer l'événement comme traité (atomicité DB)
@@ -421,134 +412,77 @@ export const stripeWebhook = async (request, reply) => {
         return reply.send({ received: true, idempotent: true });
       }
 
-      // GÉRER COMMANDE EXPIRÉE : Si commande cancelled mais paiement valide
-      if (order.status === "cancelled") {
-        console.warn(
-          `Paiement reçu pour commande ${order.id} expirée/annulée. ` +
-          `Session Stripe ${session.id} toujours valide.`
-        );
-        
-        // Option 1 : Refund automatique (recommandé pour éviter fraude)
-        if (session.payment_status === "paid" && session.payment_intent) {
-          try {
-            // session.payment_intent peut être un string ou un objet PaymentIntent
-            const paymentIntentId = typeof session.payment_intent === "string" 
-              ? session.payment_intent 
-              : session.payment_intent.id;
-            
-            const refund = await stripe.refunds.create({
-              payment_intent: paymentIntentId,
-              reason: "requested_by_customer",
-            });
-            console.log(`Refund ${refund.id} créé pour commande expirée ${order.id}`);
-            
-            // Marquer l'événement comme traité
-            return reply.send({ 
-              received: true, 
-              action: "refunded_expired_order",
-              refund_id: refund.id 
-            });
-          } catch (refundError) {
-            console.error(`Erreur lors du refund pour commande expirée ${order.id}:`, refundError);
-            // Continuer pour permettre traitement manuel
-          }
-        }
-        
-        // Si refund échoue, retourner pour traitement manuel
-        return reply.send({ 
-          received: true, 
-          warning: "expired_order_payment",
-          order_id: order.id 
-        });
-      }
-
-      // Vérifier que la commande est en statut pending
-      if (order.status !== "pending") {
-        console.warn(`Commande ${order.id} déjà traitée (statut: ${order.status})`);
-        return reply.send({ received: true });
+      // Si la commande est déjà payée, ne rien faire
+      if (order.status === "paid") {
+        console.log(`Commande ${order.id} déjà payée, webhook idempotent`);
+        return reply.send({ received: true, alreadyPaid: true });
       }
 
       // Vérifier le paiement
       if (session.payment_status === "paid") {
-        // Comparer le montant Stripe avec le montant attendu
-        const stripeAmountTotal = session.amount_total; // Montant total en centimes depuis Stripe
-        const expectedAmount = order.expectedAmount; // Montant attendu en centimes
+        // Si la commande vient d'être créée avec le statut "paid", on a déjà tout fait
+        // Sinon, on doit valider et mettre à jour le statut
+        if (order.status !== "paid") {
+          // Comparer le montant Stripe avec le montant attendu
+          const stripeAmountTotal = session.amount_total; // Montant total en centimes depuis Stripe
+          const expectedAmount = order.expectedAmount; // Montant attendu en centimes
 
-        // Pour les particuliers : expectedAmount est en TTC (calculé côté backend)
-        // Pour les pros : expectedAmount est en HT
-        // On compare directement avec le montant total de Stripe
-        // (qui sera TTC pour particuliers, HT pour pros)
-        
-        // Vérifier que expectedAmount existe
-        if (expectedAmount === null || expectedAmount === undefined) {
-          console.error(`expectedAmount manquant pour la commande ${order.id}`);
-          await Order.updateStatus(order.id, "failed");
-          return reply.code(400).send({ error: "expectedAmount manquant" });
-        }
+          // Vérifier que expectedAmount existe
+          if (expectedAmount === null || expectedAmount === undefined) {
+            console.error(`expectedAmount manquant pour la commande ${order.id}`);
+            await Order.updateStatus(order.id, "failed");
+            return reply.code(400).send({ error: "expectedAmount manquant" });
+          }
 
-        // VÉRIFICATION CRITIQUE : Currency doit être EUR
-        if (session.currency && session.currency.toUpperCase() !== "EUR") {
-          console.error(
-            `[AUDIT] Currency invalide pour la commande ${order.id}: ` +
-            `Stripe=${session.currency}, Attendu=EUR, Event=${event.id}`
-          );
-          await Order.updateStatus(order.id, "failed");
-          return reply.code(400).send({ 
-            error: "Currency invalide",
-            currency: session.currency,
-          });
-        }
+          // VÉRIFICATION CRITIQUE : Currency doit être EUR
+          if (session.currency && session.currency.toUpperCase() !== "EUR") {
+            console.error(
+              `[AUDIT] Currency invalide pour la commande ${order.id}: ` +
+              `Stripe=${session.currency}, Attendu=EUR, Event=${event.id}`
+            );
+            await Order.updateStatus(order.id, "failed");
+            return reply.code(400).send({ 
+              error: "Currency invalide",
+              currency: session.currency,
+            });
+          }
 
-        // VÉRIFICATION CRITIQUE : Montant Stripe doit correspondre au montant attendu
-        // Protection contre fraude coupon/dashboard/rounding
-        // Note : Stripe Climate peut ajouter 0.5% au montant si activé dans les paramètres
-        const amountDifference = Math.abs((stripeAmountTotal || 0) - expectedAmount);
-        
-        // Tolérance selon type utilisateur :
-        // - Stripe Climate : 0.5% du montant (peut être ajouté automatiquement)
-        // - Arrondis : 1 centime (particuliers) ou 5 centimes (pros)
-        const climateTolerance = Math.ceil(expectedAmount * 0.005); // 0.5% en centimes
-        const roundingTolerance = order.isPro ? 5 : 1;
-        const tolerance = climateTolerance + roundingTolerance;
-        
-        if (amountDifference > tolerance) {
-          console.error(
-            `[AUDIT] Incohérence de montant pour la commande ${order.id}: ` +
-            `Stripe=${stripeAmountTotal} centimes, Attendu=${expectedAmount} centimes, ` +
-            `Différence=${amountDifference}, Tolérance=${tolerance}, isPro=${order.isPro}, Event=${event.id}`
-          );
-          // Ne pas confirmer le paiement en cas d'incohérence
-          await Order.updateStatus(order.id, "failed");
-          return reply.code(400).send({ 
-            error: "Incohérence de montant détectée",
-            stripeAmount: stripeAmountTotal,
-            expectedAmount,
-            difference: amountDifference,
-            tolerance,
-            isPro: order.isPro,
-          });
-        }
-        
-        // Log si différence dans la tolérance (pour monitoring)
-        if (amountDifference > 0) {
-          console.log(
-            `[AUDIT] Différence de montant acceptée (dans tolérance) pour commande ${order.id}: ` +
-            `Différence=${amountDifference} centimes, Tolérance=${tolerance}, isPro=${order.isPro}`
-          );
+          // VÉRIFICATION CRITIQUE : Montant Stripe doit correspondre au montant attendu
+          const amountDifference = Math.abs((stripeAmountTotal || 0) - expectedAmount);
+          const climateTolerance = Math.ceil(expectedAmount * 0.005);
+          const roundingTolerance = order.isPro ? 5 : 1;
+          const tolerance = climateTolerance + roundingTolerance;
+          
+          if (amountDifference > tolerance) {
+            console.error(
+              `[AUDIT] Incohérence de montant pour la commande ${order.id}: ` +
+              `Stripe=${stripeAmountTotal} centimes, Attendu=${expectedAmount} centimes, ` +
+              `Différence=${amountDifference}, Tolérance=${tolerance}, isPro=${order.isPro}, Event=${event.id}`
+            );
+            await Order.updateStatus(order.id, "failed");
+            return reply.code(400).send({ 
+              error: "Incohérence de montant détectée",
+              stripeAmount: stripeAmountTotal,
+              expectedAmount,
+              difference: amountDifference,
+              tolerance,
+              isPro: order.isPro,
+            });
+          }
+
+          // Les montants correspondent, confirmer le paiement
+          await Order.updateStatus(order.id, "paid");
+          if (session.payment_intent) {
+            await Order.updatePaymentIntent(order.id, session.payment_intent);
+          }
         }
 
         // JOURNALISATION AUDIT : Paiement validé
         console.log(
           `[AUDIT] Paiement validé pour commande ${order.id}: ` +
-          `Montant=${stripeAmountTotal} centimes, Currency=${session.currency}, ` +
+          `Montant=${session.amount_total} centimes, Currency=${session.currency}, ` +
           `PaymentIntent=${session.payment_intent}, Event=${event.id}`
         );
-
-        // Les montants correspondent, confirmer le paiement
-        await Order.updateStatus(order.id, "paid");
-        await Order.updatePaymentIntent(order.id, session.payment_intent);
-        
-        // L'événement est déjà marqué comme traité (atomicité DB au début)
 
         // DÉCOMPTER LE STOCK : Récupérer les items de la commande et décrémenter le stock
         // Utilisation d'une transaction batch pour garantir la cohérence
