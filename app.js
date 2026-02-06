@@ -98,7 +98,7 @@ await fastify.register(cors, {
       return cb(null, true);
     }
 
-    console.warn("❌ CORS bloqué pour:", origin);
+    console.warn("   CORS bloqué pour:", origin);
     console.warn("   Origin normalisée:", normalizedOrigin);
     console.warn("   Origines autorisées (brutes):", corsOrigins);
     console.warn("   Origines autorisées (normalisées):", normalizedCorsOrigins);
@@ -120,7 +120,7 @@ await fastify.register(multipart, {
 // Headers de sécurité pour protéger contre XSS et autres attaques
 fastify.addHook("onRequest", async (request, reply) => {
   // Log pour vérifier si les requêtes atteignent Fastify
-  console.log(`📥 Requête ${request.method} ${request.url} depuis origin: ${request.headers.origin || 'none'}`);
+  console.log(`Requête ${request.method} ${request.url} depuis origin: ${request.headers.origin || 'none'}`);
   
   // Content Security Policy : empêche l'exécution de scripts non autorisés
   reply.header("Content-Security-Policy", 
@@ -178,23 +178,25 @@ fastify.setErrorHandler((error, request, reply) => {
   });
 });
 
-// Enregistrer les routes
-fastify.register(productsRoutes);
-fastify.register(authRoutes);
-fastify.register(cartRoutes);
-fastify.register(favoritesRoutes);
-fastify.register(websocketRoutes);
-fastify.register(paymentRoutes);
-fastify.register(ordersRoutes);
-fastify.register(invoicesRoutes);
-fastify.register(deliveriesRoutes);
-fastify.register(adminProductsRoutes);
-fastify.register(adminStockRoutes);
-fastify.register(adminStatsRoutes);
-fastify.register(adminOrdersRoutes);
-fastify.register(adminInvoicesRoutes);
-fastify.register(adminUploadRoutes);
-fastify.register(contactRoutes);
+// Enregistrer les routes avec le préfixe /api
+fastify.register(async function (fastify) {
+  fastify.register(productsRoutes);
+  fastify.register(authRoutes);
+  fastify.register(cartRoutes);
+  fastify.register(favoritesRoutes);
+  fastify.register(websocketRoutes);
+  fastify.register(paymentRoutes);
+  fastify.register(ordersRoutes);
+  fastify.register(invoicesRoutes);
+  fastify.register(deliveriesRoutes);
+  fastify.register(adminProductsRoutes);
+  fastify.register(adminStockRoutes);
+  fastify.register(adminStatsRoutes);
+  fastify.register(adminOrdersRoutes);
+  fastify.register(adminInvoicesRoutes);
+  fastify.register(adminUploadRoutes);
+  fastify.register(contactRoutes);
+}, { prefix: '/api' });
 
 // Initialiser la connexion à la base de données
 await connectDB();
