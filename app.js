@@ -196,7 +196,7 @@ fastify.register(adminOrdersRoutes);
 fastify.register(adminInvoicesRoutes);
 fastify.register(adminUploadRoutes);
 fastify.register(contactRoutes);
-}, { prefix: '/api' });
+});
 
 // Initialiser la connexion à la base de données
 await connectDB();
