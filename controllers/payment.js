@@ -537,6 +537,48 @@ export const stripeWebhook = async (request, reply) => {
           console.log(
             `[WEBHOOK] ✅ Commande ${order.id} créée avec succès depuis webhook Stripe pour session ${session.id}`
           );
+
+          // ============================================
+          // POST-CRÉATION : Livraison, Facture, Panier
+          // ============================================
+          
+          // Vider le panier de l'utilisateur
+          try {
+            await Cart.clear(userId);
+            console.log(`[WEBHOOK] Panier vidé pour utilisateur ${userId}`);
+          } catch (cartError) {
+            console.error(`[WEBHOOK] Erreur lors du vidage du panier pour utilisateur ${userId}:`, cartError);
+            // Ne pas bloquer le processus
+          }
+
+          // Générer automatiquement la facture
+          try {
+            const invoice = await Invoice.createFromOrder(order.id);
+            if (invoice) {
+              console.log(`[WEBHOOK] Facture ${invoice.invoiceNumber} créée pour la commande ${order.id}`);
+            }
+          } catch (invoiceError) {
+            // Ne pas bloquer le processus si la génération de facture échoue
+            console.error(`[WEBHOOK] Erreur lors de la création de la facture pour la commande ${order.id}:`, invoiceError);
+          }
+
+          // Créer automatiquement la livraison avec date estimée selon le type de compte
+          // Pro : 24h max, Particuliers : 72h max
+          try {
+            const delivery = await Delivery.createFromOrder(order.id, order.isPro);
+            if (delivery) {
+              console.log(
+                `[WEBHOOK] Livraison créée pour la commande ${order.id} ` +
+                `(date estimée: ${delivery.estimatedDeliveryDate}, ` +
+                `type: ${order.isPro ? "Pro (24h)" : "Particulier (72h)"})`
+              );
+            }
+          } catch (deliveryError) {
+            // Ne pas bloquer le processus si la création de livraison échoue
+            console.error(`[WEBHOOK] Erreur lors de la création de la livraison pour la commande ${order.id}:`, deliveryError);
+          }
+
+          console.log(`[WEBHOOK] ✅ Commande ${order.id} complètement finalisée (livraison + facture + panier vidé)`);
         } catch (createError) {
           console.error(`Erreur lors de la création de la commande depuis webhook:`, createError);
           await StripeWebhookEvent.markAsOrphan(event.id, event.type);
