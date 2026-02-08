@@ -7,6 +7,7 @@ import Product from "../models/products.js";
 import StripeWebhookEvent from "../models/stripeWebhookEvents.js";
 import pool from "../db.js";
 import { calculateCartTotal, getDeliveryFee } from "../utils/priceCalculation.js";
+import { validatePerfumeMinimum } from "../utils/perfumeValidation.js";
 
 if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error("STRIPE_SECRET_KEY n'est pas défini dans les variables d'environnement");
@@ -166,6 +167,44 @@ export const createCheckoutSession = async (request, reply) => {
       });
     }
 
+    // VÉRIFICATION PARFUMS : Valider le minimum de 6 produits parfum (quantité totale)
+    const perfumeValidation = validatePerfumeMinimum(cartItems);
+    
+    // Log pour déboguer (toujours actif pour voir ce qui se passe)
+    console.log("=== PERFUME VALIDATION ===");
+    console.log("Cart items count:", cartItems.length);
+    console.log("Total perfume quantity:", perfumeValidation.totalCount);
+    console.log("Is valid:", perfumeValidation.isValid);
+    console.log("Message:", perfumeValidation.message);
+    console.log("Missing:", perfumeValidation.missing);
+    
+    // Afficher les références des produits dans le panier
+    if (cartItems.length > 0) {
+      console.log("Products in cart:");
+      cartItems.forEach((item, index) => {
+        const product = item?.productId;
+        if (product) {
+          console.log(`  [${index}] Product ID: ${product.id}, Ref: ${product.ref || 'NO REF'}, Nom: ${product.nom || 'NO NAME'}, Quantity: ${item.quantity || 1}`);
+        }
+      });
+    }
+    console.log("============================");
+    
+    if (!perfumeValidation.isValid) {
+      console.log("❌ CHECKOUT BLOQUÉ - Pas assez de produits parfum");
+      return reply.code(400).send({
+        success: false,
+        message: perfumeValidation.message || "Vous devez commander au minimum 6 produits parfum.",
+        perfumeValidation: {
+          totalCount: perfumeValidation.totalCount,
+          missing: perfumeValidation.missing,
+          minimumRequired: perfumeValidation.minimumRequired,
+        },
+      });
+    }
+    
+    console.log("✅ Validation parfums OK - Checkout autorisé");
+
     // Calculer les prix côté backend (SEULE source de vérité)
     // TVA : 0% si pro UE avec vatStatus="validated", sinon 20%
     const cartCalculation = await calculateCartTotal(cartItems, isPro, request.user);
@@ -178,8 +217,10 @@ export const createCheckoutSession = async (request, reply) => {
     }
 
     const deliveryFee = getDeliveryFee(cartCalculation.totalTTC);
-    const totalWithDelivery = cartCalculation.totalTTC + deliveryFee;
-    const totalInCentsWithDelivery = Math.round(totalWithDelivery * 100);
+    const deliveryFeeInCents = Math.round(deliveryFee * 100);
+    // Utiliser la somme des centimes (arrondis individuellement) pour correspondre à Stripe
+    const totalInCentsWithDelivery = cartCalculation.totalInCents + deliveryFeeInCents;
+    const totalWithDelivery = totalInCentsWithDelivery / 100; // Pour affichage et métadonnées
     const vatRate = cartCalculation.vatRate ?? 0.2;
     const totalAmountHT = cartCalculation.totalHT + deliveryFee / (1 + vatRate);
 
@@ -562,15 +603,15 @@ export const stripeWebhook = async (request, reply) => {
             console.error(`[WEBHOOK] Erreur lors de la création de la facture pour la commande ${order.id}:`, invoiceError);
           }
 
-          // Créer automatiquement la livraison avec date estimée selon le type de compte
-          // Pro : 24h max, Particuliers : 72h max
+          // Créer automatiquement la livraison avec date estimée
+          // Tous les utilisateurs : 72h max
           try {
             const delivery = await Delivery.createFromOrder(order.id, order.isPro);
             if (delivery) {
               console.log(
                 `[WEBHOOK] Livraison créée pour la commande ${order.id} ` +
                 `(date estimée: ${delivery.estimatedDeliveryDate}, ` +
-                `type: ${order.isPro ? "Pro (24h)" : "Particulier (72h)"})`
+                `type: ${order.isPro ? "Pro" : "Particulier"} - 72h)`
               );
             }
           } catch (deliveryError) {
@@ -752,15 +793,15 @@ export const stripeWebhook = async (request, reply) => {
           console.error(`Erreur lors de la création de la facture pour la commande ${order.id}:`, invoiceError);
         }
 
-        // Créer automatiquement la livraison avec date estimée selon le type de compte
-        // Pro : 24h max, Particuliers : 72h max
+        // Créer automatiquement la livraison avec date estimée
+        // Tous les utilisateurs : 72h max
         try {
           const delivery = await Delivery.createFromOrder(order.id, order.isPro);
           if (delivery) {
             console.log(
               `Livraison créée pour la commande ${order.id} ` +
               `(date estimée: ${delivery.estimatedDeliveryDate}, ` +
-              `type: ${order.isPro ? "Pro (24h)" : "Particulier (72h)"})`
+              `type: ${order.isPro ? "Pro" : "Particulier"} - 72h)`
             );
           }
         } catch (deliveryError) {

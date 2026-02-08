@@ -18,6 +18,7 @@ import adminStatsRoutes from "./routes/admin/stats.js";
 import adminOrdersRoutes from "./routes/admin/orders.js";
 import adminInvoicesRoutes from "./routes/admin/invoices.js";
 import adminUploadRoutes from "./routes/admin/upload.js";
+import adminProMinimumQuantitiesRoutes from "./routes/admin/proMinimumQuantities.js";
 import contactRoutes from "./routes/contact.js";
 import { sendToUser } from "./routes/websocket.js";
 
@@ -66,42 +67,26 @@ const normalizeOrigin = (url) => {
 
 const normalizedCorsOrigins = corsOrigins.map(normalizeOrigin);
 
-if (!process.env.CORS_ORIGINS) {
-  console.warn("⚠️  CORS_ORIGINS non défini dans les variables d'environnement - aucune origine autorisée par défaut");
-} else {
-  console.log("✅ Origines CORS autorisées (brutes):", corsOrigins);
-  console.log("✅ Origines CORS autorisées (normalisées):", normalizedCorsOrigins);
-}
-
 // Enregistrer CORS
 await fastify.register(cors, {
   origin: (origin, cb) => {
     // Autorise Postman / curl / server-side requests
     if (!origin) {
-      console.log("🔵 CORS: Requête sans origin (server-side) - autorisée");
       return cb(null, true);
     }
 
-    console.log("🔍 CORS: Origin reçue:", origin);
     const normalizedOrigin = normalizeOrigin(origin);
-    console.log("🔍 CORS: Origin normalisée:", normalizedOrigin);
     
     // Vérifier avec l'origine normalisée
     if (normalizedCorsOrigins.includes(normalizedOrigin)) {
-      console.log("✅ CORS: Origin autorisée (normalisée)");
       return cb(null, true);
     }
 
     // Vérifier aussi avec l'origine brute (au cas où)
     if (corsOrigins.includes(origin)) {
-      console.log("✅ CORS: Origin autorisée (brute)");
+      console.log("CORS: Origin autorisée (brute)");
       return cb(null, true);
     }
-
-    console.warn("   CORS bloqué pour:", origin);
-    console.warn("   Origin normalisée:", normalizedOrigin);
-    console.warn("   Origines autorisées (brutes):", corsOrigins);
-    console.warn("   Origines autorisées (normalisées):", normalizedCorsOrigins);
     // Retourner null au lieu d'une erreur pour que Fastify renvoie quand même les headers CORS
     return cb(null, false);
   },
@@ -119,8 +104,6 @@ await fastify.register(multipart, {
 
 // Headers de sécurité pour protéger contre XSS et autres attaques
 fastify.addHook("onRequest", async (request, reply) => {
-  // Log pour vérifier si les requêtes atteignent Fastify
-  console.log(`Requête ${request.method} ${request.url} depuis origin: ${request.headers.origin || 'none'}`);
   
   // Content Security Policy : empêche l'exécution de scripts non autorisés
   reply.header("Content-Security-Policy", 
@@ -195,8 +178,9 @@ fastify.register(adminStatsRoutes);
 fastify.register(adminOrdersRoutes);
 fastify.register(adminInvoicesRoutes);
 fastify.register(adminUploadRoutes);
+fastify.register(adminProMinimumQuantitiesRoutes);
 fastify.register(contactRoutes);
-});
+}, {prefix: "/api/"});
 
 // Initialiser la connexion à la base de données
 await connectDB();

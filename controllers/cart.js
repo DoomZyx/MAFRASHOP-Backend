@@ -1,16 +1,23 @@
 import Cart from "../models/cart.js";
 import Product from "../models/products.js";
+import ProMinimumQuantity from "../models/proMinimumQuantities.js";
+import { validatePerfumeMinimum } from "../utils/perfumeValidation.js";
 import { sendToUser } from "../app.js";
 
 export const getCart = async (request, reply) => {
   try {
     const cart = await Cart.findByUserId(request.user.id);
+    const cartItems = cart || [];
+
+    // Valider les parfums dans le panier (quantité totale)
+    const perfumeValidation = validatePerfumeMinimum(cartItems);
 
     reply.type("application/json");
     return reply.send({
       success: true,
       data: {
-        cart: cart || [],
+        cart: cartItems,
+        perfumeValidation: perfumeValidation,
       },
     });
   } catch (error) {
@@ -56,10 +63,31 @@ export const addToCart = async (request, reply) => {
       });
     }
 
+    // VÉRIFICATION QUANTITÉ MINIMALE POUR PROS
+    // Si l'utilisateur est professionnel, ajuster automatiquement la quantité
+    let adjustedQuantity = parsedQuantity;
+    if (request.user.isPro) {
+      const minimumQuantityRule = await ProMinimumQuantity.findByProductId(productId);
+
+      if (minimumQuantityRule) {
+        const existingCartItem = await Cart.findItemByUserAndProduct(request.user.id, productId);
+        const currentQuantityInCart = existingCartItem ? existingCartItem.quantity : 0;
+        const requestedTotalQuantity = currentQuantityInCart + parsedQuantity;
+
+        // Ajuster automatiquement la quantité pour respecter la règle
+        if (requestedTotalQuantity % minimumQuantityRule.minimumQuantity !== 0) {
+          // Calculer la quantité totale valide (multiple de la quantité minimale)
+          const nextValidTotalQuantity = Math.ceil(requestedTotalQuantity / minimumQuantityRule.minimumQuantity) * minimumQuantityRule.minimumQuantity;
+          // Calculer la quantité à ajouter pour atteindre cette quantité totale valide
+          adjustedQuantity = nextValidTotalQuantity - currentQuantityInCart;
+        }
+      }
+    }
+
     // VÉRIFICATION STOCK : Vérifier que le stock est suffisant
     const existingCartItem = await Cart.findItemByUserAndProduct(request.user.id, productId);
     const currentQuantityInCart = existingCartItem ? existingCartItem.quantity : 0;
-    const requestedTotalQuantity = currentQuantityInCart + parsedQuantity;
+    const requestedTotalQuantity = currentQuantityInCart + adjustedQuantity;
 
     if (product.stockQuantity < requestedTotalQuantity) {
       reply.type("application/json");
@@ -71,7 +99,7 @@ export const addToCart = async (request, reply) => {
       });
     }
 
-    const cart = await Cart.addItem(request.user.id, productId, parsedQuantity);
+    const cart = await Cart.addItem(request.user.id, productId, adjustedQuantity);
 
     // Envoyer une mise à jour WebSocket
     sendToUser(request.user.id.toString(), "cart:updated", {
@@ -79,11 +107,18 @@ export const addToCart = async (request, reply) => {
     });
 
     reply.type("application/json");
+    const message = adjustedQuantity !== parsedQuantity && request.user.isPro
+      ? `Produit ajouté au panier (quantité ajustée à ${adjustedQuantity} pour respecter la règle de quantité minimale)`
+      : "Produit ajouté au panier";
+    
     return reply.send({
       success: true,
-      message: "Produit ajouté au panier",
+      message: message,
       data: {
         cart: cart,
+        quantityAdded: adjustedQuantity,
+        quantityRequested: parsedQuantity,
+        wasAdjusted: adjustedQuantity !== parsedQuantity,
       },
     });
   } catch (error) {
@@ -131,21 +166,49 @@ export const updateCartItem = async (request, reply) => {
       });
     }
 
+    // VÉRIFICATION QUANTITÉ MINIMALE POUR PROS
+    // Si l'utilisateur est professionnel, ajuster automatiquement la quantité
+    let adjustedQuantity = parsedQuantity;
+    if (request.user.isPro) {
+      const minimumQuantityRule = await ProMinimumQuantity.findByProductId(productId);
+
+      if (minimumQuantityRule) {
+        // Récupérer la quantité actuelle dans le panier pour savoir si on incrémente ou décrémente
+        const existingCartItem = await Cart.findItemByUserAndProduct(request.user.id, productId);
+        const currentQuantityInCart = existingCartItem ? existingCartItem.quantity : 0;
+        
+        // Ajuster automatiquement la quantité pour respecter la règle
+        if (parsedQuantity % minimumQuantityRule.minimumQuantity !== 0) {
+          if (parsedQuantity < currentQuantityInCart) {
+            // Décrémentation : arrondir vers le bas au multiple inférieur
+            adjustedQuantity = Math.floor(parsedQuantity / minimumQuantityRule.minimumQuantity) * minimumQuantityRule.minimumQuantity;
+            // S'assurer qu'on ne descende pas en dessous de la quantité minimale
+            if (adjustedQuantity < minimumQuantityRule.minimumQuantity) {
+              adjustedQuantity = minimumQuantityRule.minimumQuantity;
+            }
+          } else {
+            // Incrémentation : arrondir vers le haut au multiple supérieur
+            adjustedQuantity = Math.ceil(parsedQuantity / minimumQuantityRule.minimumQuantity) * minimumQuantityRule.minimumQuantity;
+          }
+        }
+      }
+    }
+
     // VÉRIFICATION STOCK : Vérifier que le stock est suffisant
-    if (product.stockQuantity < parsedQuantity) {
+    if (product.stockQuantity < adjustedQuantity) {
       reply.type("application/json");
       return reply.code(400).send({
         success: false,
-        message: `Stock insuffisant. Stock disponible : ${product.stockQuantity}, Quantité demandée : ${parsedQuantity}`,
+        message: `Stock insuffisant. Stock disponible : ${product.stockQuantity}, Quantité demandée : ${adjustedQuantity}`,
         availableStock: product.stockQuantity,
-        requestedQuantity: parsedQuantity,
+        requestedQuantity: adjustedQuantity,
       });
     }
 
     const cart = await Cart.updateQuantity(
       request.user.id,
       productId,
-      parsedQuantity
+      adjustedQuantity
     );
 
     // Envoyer une mise à jour WebSocket
@@ -154,11 +217,18 @@ export const updateCartItem = async (request, reply) => {
     });
 
     reply.type("application/json");
+    const message = adjustedQuantity !== parsedQuantity && request.user.isPro
+      ? `Panier mis à jour (quantité ajustée à ${adjustedQuantity} pour respecter la règle de quantité minimale)`
+      : "Panier mis à jour";
+    
     return reply.send({
       success: true,
-      message: "Panier mis à jour",
+      message: message,
       data: {
         cart: cart,
+        quantitySet: adjustedQuantity,
+        quantityRequested: parsedQuantity,
+        wasAdjusted: adjustedQuantity !== parsedQuantity,
       },
     });
   } catch (error) {

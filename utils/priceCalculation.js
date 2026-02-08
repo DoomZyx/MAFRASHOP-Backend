@@ -98,6 +98,7 @@ export async function calculateCartTotal(cartItems, isPro, user = null) {
   const calculatedItems = [];
   let totalHT = 0;
   let totalTTC = 0;
+  let totalInCents = 0; // Somme des totalPriceInCents pour correspondre à Stripe
 
   for (const item of cartItems) {
     if (!item || !item.productId) continue;
@@ -113,6 +114,7 @@ export async function calculateCartTotal(cartItems, isPro, user = null) {
     const totalPriceTTC = priceData.totalPriceHT * (1 + TVA_RATE);
 
     // Prix en centimes pour Stripe (toujours TTC)
+    // IMPORTANT : Arrondir chaque item individuellement pour correspondre à Stripe
     const unitPriceInCents = Math.round(unitPriceTTC * 100);
     const totalPriceInCents = Math.round(totalPriceTTC * 100);
 
@@ -129,10 +131,9 @@ export async function calculateCartTotal(cartItems, isPro, user = null) {
 
     totalHT += priceData.totalPriceHT;
     totalTTC += totalPriceTTC;
+    // Additionner les centimes arrondis pour correspondre exactement à ce que Stripe calcule
+    totalInCents += totalPriceInCents;
   }
-
-  // Montant total en centimes pour Stripe (TTC pour tous)
-  const totalInCents = Math.round(totalTTC * 100);
 
   return {
     items: calculatedItems,

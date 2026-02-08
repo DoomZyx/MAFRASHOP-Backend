@@ -19,21 +19,15 @@ const mapDelivery = (row) => {
 };
 
 /**
- * Calcule la date de livraison estimée selon le type de compte
- * - Pro : 24h max
- * - Particuliers : 72h max
+ * Calcule la date de livraison estimée
+ * - Tous les utilisateurs : 72h max
  */
 function calculateEstimatedDeliveryDate(isPro) {
   const now = new Date();
   const estimatedDate = new Date(now);
   
-  if (isPro) {
-    // Pro : 24h max
-    estimatedDate.setHours(estimatedDate.getHours() + 24);
-  } else {
-    // Particuliers : 72h max
-    estimatedDate.setHours(estimatedDate.getHours() + 72);
-  }
+  // Tous les utilisateurs : 72h max
+  estimatedDate.setHours(estimatedDate.getHours() + 72);
   
   // Retourner uniquement la date (sans l'heure)
   return estimatedDate.toISOString().split("T")[0];
