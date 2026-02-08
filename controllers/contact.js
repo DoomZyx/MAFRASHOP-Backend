@@ -112,11 +112,11 @@ export const sendContactEmail = async (request, reply) => {
   try {
     const { orderNumber, email, subject, message } = request.body;
 
-    // Validation des champs requis
-    if (!orderNumber || !email || !subject || !message) {
+    // Validation des champs requis (orderNumber est optionnel)
+    if (!email || !subject || !message) {
       return reply.code(400).send({
         success: false,
-        message: "Tous les champs sont requis",
+        message: "Les champs email, sujet et message sont requis",
       });
     }
 
@@ -149,11 +149,12 @@ export const sendContactEmail = async (request, reply) => {
     const subjectLabel = subjectMap[subject] || subject;
 
     // Contenu de l'email avec design professionnel
+    const subjectSuffix = orderNumber ? ` - Commande ${orderNumber}` : "";
     const mailOptions = {
       from: `"MAFRASHOP Contact" <${process.env.SMTP_USER}>`,
       to: recipientEmail,
       replyTo: email,
-      subject: `[Contact SAV] ${subjectLabel} - Commande ${orderNumber}`,
+      subject: `[Contact SAV] ${subjectLabel}${subjectSuffix}`,
       html: `
         <!DOCTYPE html>
         <html lang="fr">
@@ -192,12 +193,14 @@ export const sendContactEmail = async (request, reply) => {
                               <a href="mailto:${email}" style="color: #d32f2f; text-decoration: none; font-weight: 600;">${email}</a>
                             </td>
                           </tr>
+                          ${orderNumber ? `
                           <tr>
                             <td style="padding: 8px 0; color: #555; font-size: 14px;">
                               <strong style="color: #27292a; min-width: 140px; display: inline-block;">Commande :</strong>
                               <span style="color: #27292a; font-weight: 600;">${orderNumber}</span>
                             </td>
                           </tr>
+                          ` : ''}
                           <tr>
                             <td style="padding: 8px 0; color: #555; font-size: 14px;">
                               <strong style="color: #27292a; min-width: 140px; display: inline-block;">Sujet :</strong>

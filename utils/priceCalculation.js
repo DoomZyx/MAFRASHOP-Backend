@@ -1,18 +1,14 @@
 import Product from "../models/products.js";
 
-/** Seuil en euros TTC au-delà duquel la livraison est gratuite */
-export const FREE_SHIPPING_THRESHOLD = 80;
-
-/** Frais de livraison en euros si panier < FREE_SHIPPING_THRESHOLD */
+/** Frais de livraison en euros */
 export const DELIVERY_FEE = 7.5;
 
 /**
- * Calcule les frais de livraison selon le montant du panier TTC
- * @param {number} subtotalTTC - Sous-total panier TTC en euros
- * @returns {number} Frais de livraison en euros (0 si subtotalTTC >= FREE_SHIPPING_THRESHOLD)
+ * Calcule les frais de livraison
+ * @param {number} subtotalTTC - Sous-total panier TTC en euros (non utilisé, conservé pour compatibilité)
+ * @returns {number} Frais de livraison en euros
  */
 export function getDeliveryFee(subtotalTTC) {
-  if (subtotalTTC >= FREE_SHIPPING_THRESHOLD) return 0;
   return DELIVERY_FEE;
 }
 

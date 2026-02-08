@@ -12,11 +12,11 @@ async function contactRoutes(fastify, options) {
       tags: ["contact"],
       body: {
         type: "object",
-        required: ["orderNumber", "email", "subject", "message"],
+        required: ["email", "subject", "message"],
         properties: {
           orderNumber: {
             type: "string",
-            description: "Numéro de commande",
+            description: "Numéro de commande (optionnel)",
           },
           email: {
             type: "string",
