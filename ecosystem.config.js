@@ -14,7 +14,7 @@ module.exports = {
       // Les autres variables seront chargées depuis .env.preprod par loadEnv.js
     },
     env_production: {
-      NODE_ENV: "production",
+      NODE_ENV: "prod",
     }
    }
  ]
