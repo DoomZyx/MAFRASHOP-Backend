@@ -1,7 +1,7 @@
 import "./loadEnv.js";
 import fastify from "./app.js";
 
-const PORT = parseInt(process.env.PORT || "8080", 10);
+const PORT = parseInt(process.env.PORT || "3000", 10);
 const ADDRESS = process.env.ADDRESS || "0.0.0.0";
 
 fastify.listen({ port: PORT, host: ADDRESS }, (err, address) => {
