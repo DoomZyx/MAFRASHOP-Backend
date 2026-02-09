@@ -4,7 +4,7 @@ import fastify from "./app.js";
 const PORT = parseInt(process.env.PORT || "8080", 10);
 const ADDRESS = process.env.ADDRESS || "0.0.0.0";
 
-fastify.listen({ port: PORT, host: "0.0.0.0" }, (err, address) => {
+fastify.listen({ port: PORT, host: ADDRESS }, (err, address) => {
   if (err) {
     console.error("Erreur lors du démarrage du serveur:", err);
     process.exit(1);
