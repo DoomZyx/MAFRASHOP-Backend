@@ -21,6 +21,7 @@
     "migrate:deliveries-datetime": "node script/addScheduledDeliveryDateTime.js",
     "migrate:products-stock-sku": "node script/addStockAndSkuToProducts.js",
     "migrate:stock-quantity": "node script/updateStockToQuantity.js",
+    "migrate:products-slug": "node script/addSlugToProducts.js",
     "migrate:orders-status": "node script/addShippedPreparingStatus.js",
     "migrate:pro-minimum-quantities": "node script/createProMinimumQuantitiesTable.js",
     "migrate:pro-minimum-quantities-to-product": "node script/migrateProMinimumQuantitiesToProductId.js",

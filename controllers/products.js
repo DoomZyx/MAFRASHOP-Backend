@@ -26,7 +26,15 @@ export const getAllProducts = async (request, reply) => {
 export const getProductById = async (request, reply) => {
   try {
     const { id } = request.params;
-    const product = await Products.findById(id);
+    
+    // Essayer d'abord par slug, puis par ID si ce n'est pas un slug valide
+    let product = await Products.findBySlug(id);
+    
+    // Si pas trouvé par slug, essayer par ID (si c'est un nombre)
+    if (!product && /^\d+$/.test(id)) {
+      product = await Products.findById(id);
+    }
+    
     if (!product) {
       reply.type("application/json");
       return reply.status(404).send({ message: "Produit non trouvé" });

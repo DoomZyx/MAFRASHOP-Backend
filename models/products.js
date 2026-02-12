@@ -35,6 +35,7 @@ const mapProduct = (row) => {
     category: row.category,
     subcategory: row.subcategory,
     nom: row.nom,
+    slug: row.slug || null,
     ref: row.ref,
     url_image: encodeImageUrl(row.url_image),
     description: row.description,
@@ -84,6 +85,14 @@ class Product {
     return mapProduct(result.rows[0]);
   }
 
+  static async findBySlug(slug) {
+    const result = await pool.query(
+      "SELECT * FROM products WHERE slug = $1",
+      [slug]
+    );
+    return mapProduct(result.rows[0]);
+  }
+
   static async findBestsellers() {
     const result = await pool.query(
       "SELECT * FROM products WHERE is_bestseller = TRUE ORDER BY id"
@@ -114,12 +123,28 @@ class Product {
     return mapProduct(result.rows[0]);
   }
 
+  // Fonction pour générer un slug à partir d'un nom
+  static generateSlug(nom) {
+    if (!nom) return "";
+    
+    return nom
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Supprimer les accents
+      .replace(/[^a-z0-9\s-]/g, "") // Supprimer les caractères spéciaux
+      .trim()
+      .replace(/\s+/g, "-") // Remplacer les espaces par des tirets
+      .replace(/-+/g, "-") // Remplacer les tirets multiples par un seul
+      .replace(/^-|-$/g, ""); // Supprimer les tirets en début/fin
+  }
+
   // Créer un produit
   static async create(productData) {
     const {
       category,
       subcategory,
       nom,
+      slug,
       ref,
       url_image,
       description,
@@ -135,18 +160,37 @@ class Product {
       promotion_percentage = null,
     } = productData;
 
+    // Générer le slug si non fourni
+    let finalSlug = slug;
+    if (!finalSlug && nom) {
+      let baseSlug = this.generateSlug(nom);
+      let counter = 1;
+      finalSlug = baseSlug;
+
+      // Vérifier l'unicité
+      while (true) {
+        const existing = await pool.query("SELECT id FROM products WHERE slug = $1", [finalSlug]);
+        if (existing.rows.length === 0) {
+          break;
+        }
+        finalSlug = `${baseSlug}-${counter}`;
+        counter++;
+      }
+    }
+
     const result = await pool.query(
       `INSERT INTO products (
-        category, subcategory, nom, ref, url_image, description, format,
+        category, subcategory, nom, slug, ref, url_image, description, format,
         net_socofra, public_ht, garage, stock_quantity, stock_alert_threshold, sku,
         is_bestseller, is_promotion, promotion_percentage,
         created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *`,
       [
         category,
         subcategory,
         nom,
+        finalSlug,
         ref,
         url_image,
         description,
@@ -202,6 +246,29 @@ class Product {
     if (nom !== undefined) {
       fields.push(`nom = $${paramIndex++}`);
       values.push(nom);
+      // Générer automatiquement le slug si le nom change
+      if (nom) {
+        let baseSlug = this.generateSlug(nom);
+        let slug = baseSlug;
+        let counter = 1;
+
+        // Vérifier l'unicité
+        while (true) {
+          const existing = await pool.query("SELECT id FROM products WHERE slug = $1 AND id != $2", [slug, id]);
+          if (existing.rows.length === 0) {
+            break;
+          }
+          slug = `${baseSlug}-${counter}`;
+          counter++;
+        }
+
+        fields.push(`slug = $${paramIndex++}`);
+        values.push(slug);
+      }
+    }
+    if (productData.slug !== undefined && productData.slug !== null) {
+      fields.push(`slug = $${paramIndex++}`);
+      values.push(productData.slug);
     }
     if (ref !== undefined) {
       fields.push(`ref = $${paramIndex++}`);
