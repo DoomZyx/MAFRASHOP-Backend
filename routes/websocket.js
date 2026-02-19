@@ -47,10 +47,12 @@ export default async function websocketRoutes(fastify, options) {
         return;
       }
 
-      // Extraire le token de l'URL
       const url = new URL(request.url, `http://${request.headers.host}`);
-      const token = url.searchParams.get("token");
-
+      let token = url.searchParams.get("token");
+      if (!token && request.headers.cookie) {
+        const match = request.headers.cookie.match(/mafra_at=([^;]+)/);
+        if (match) token = match[1].trim();
+      }
       if (!token) {
         socket.close(1008, "Token manquant");
         return;

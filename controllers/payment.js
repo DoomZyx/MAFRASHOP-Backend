@@ -855,10 +855,39 @@ export const getSessionStatus = async (request, reply) => {
     }
 
     // 2. Vérifier ownership en DB AVANT appel Stripe (anti-enumeration)
-    const order = await Order.findByStripeSessionId(sessionId);
+    let order = await Order.findByStripeSessionId(sessionId);
 
     if (!order) {
-      // Ne pas révéler si la session existe ou non (anti-enumeration)
+      // Commande pas encore en base (webhook peut être en retard). Vérifier Stripe et ownership.
+      try {
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        const sessionUserId = session.metadata?.userId ? parseInt(session.metadata.userId, 10) : null;
+        const currentUserId = userId ? parseInt(userId.toString(), 10) : null;
+        if (
+          sessionUserId === currentUserId &&
+          session.payment_status === "paid"
+        ) {
+          // Paiement OK, commande en cours de création par le webhook → demander au client de réessayer
+          reply.type("application/json");
+          return reply.code(202).send({
+            success: true,
+            data: {
+              session: {
+                id: session.id,
+                status: session.payment_status,
+                customerEmail: session.customer_email,
+              },
+              order: null,
+              processing: true,
+              message: "Commande en cours de création, veuillez réessayer dans quelques secondes",
+            },
+          });
+        }
+      } catch (e) {
+        if (e.type !== "StripeInvalidRequestError") {
+          console.error("getSessionStatus: erreur Stripe (order null):", e.message);
+        }
+      }
       return reply.code(404).send({
         success: false,
         message: "Session non trouvée",

@@ -39,15 +39,7 @@ export default async function authRoutes(fastify, options) {
   fastify.post("/auth/refresh", refreshToken);
 
   fastify.get("/auth/google/config", async (request, reply) => {
-    const googleConfig = {
-      success: true,
-      data: {
-        clientId: process.env.GOOGLE_CLIENT_ID,
-        redirectUri: process.env.GOOGLE_REDIRECT_URI,
-      },
-    };
-
-    reply.send(googleConfig);
+    reply.send({ success: true, data: {} });
   });
 
   fastify.put("/auth/profile", { preHandler: verifyToken }, updateProfile);

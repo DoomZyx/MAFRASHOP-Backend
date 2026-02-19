@@ -19,21 +19,27 @@ const logAuthFailure = (reason, details = {}) => {
   );
 };
 
+const COOKIE_ACCESS = "mafra_at";
+
 export const verifyToken = async (request, reply) => {
   const clientIp = request.ip || request.headers["x-forwarded-for"] || "unknown";
-  
+
   try {
+    let token = null;
     const authHeader = request.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      logAuthFailure("Token manquant", { ip: clientIp, path: request.url });
-      return reply.code(401).send({ 
-        success: false, 
-        message: "Token d'authentification manquant" 
-      });
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
+    } else if (request.cookies && request.cookies[COOKIE_ACCESS]) {
+      token = request.cookies[COOKIE_ACCESS];
     }
 
-    const token = authHeader.split(" ")[1];
+    if (!token) {
+      logAuthFailure("Token manquant", { ip: clientIp, path: request.url });
+      return reply.code(401).send({
+        success: false,
+        message: "Token d'authentification manquant",
+      });
+    }
     
     if (!process.env.JWT_SECRET) {
       throw new Error("JWT_SECRET non configuré");
@@ -155,13 +161,14 @@ export const verifyToken = async (request, reply) => {
 
 export const optionalAuth = async (request, reply) => {
   try {
+    let token = null;
     const authHeader = request.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
+    } else if (request.cookies && request.cookies[COOKIE_ACCESS]) {
+      token = request.cookies[COOKIE_ACCESS];
     }
-
-    const token = authHeader.split(" ")[1];
+    if (!token) return;
     
     if (!process.env.JWT_SECRET) {
       return;

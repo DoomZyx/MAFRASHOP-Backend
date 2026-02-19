@@ -1,6 +1,7 @@
 import './loadEnv.js';
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import pool from "./db.js";
 import productsRoutes from "./routes/products.js";
@@ -95,6 +96,11 @@ await fastify.register(cors, {
   credentials: true,
 });
 
+await fastify.register(cookie, {
+  secret: process.env.COOKIE_SECRET || process.env.JWT_SECRET || "cookie-secret",
+  parseOptions: {},
+});
+
 // Enregistrer multipart pour l'upload de fichiers
 await fastify.register(multipart, {
   limits: {
@@ -180,7 +186,7 @@ fastify.register(adminInvoicesRoutes);
 fastify.register(adminUploadRoutes);
 fastify.register(adminProMinimumQuantitiesRoutes);
 fastify.register(contactRoutes);
-});
+}, { prefix: "/api" });
 
 // Initialiser la connexion à la base de données
 await connectDB();
