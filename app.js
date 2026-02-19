@@ -186,7 +186,6 @@ fastify.register(adminInvoicesRoutes);
 fastify.register(adminUploadRoutes);
 fastify.register(adminProMinimumQuantitiesRoutes);
 fastify.register(contactRoutes);
-<<<<<<< HEAD
 });
 
 // Initialiser la connexion à la base de données
