@@ -5,6 +5,32 @@ import BlacklistedToken from "../models/blacklistedTokens.js";
 import { generateJTI } from "../models/blacklistedTokens.js";
 import UserSession from "../models/userSessions.js";
 
+const COOKIE_ACCESS = "mafra_at";
+const COOKIE_REFRESH = "mafra_rt";
+const isProduction = process.env.NODE_ENV === "production";
+
+const setAuthCookies = (reply, accessToken, refreshToken, accessTokenExpiresIn) => {
+  const cookieOpts = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: "lax",
+    path: "/",
+  };
+  reply.setCookie(COOKIE_ACCESS, accessToken, {
+    ...cookieOpts,
+    maxAge: accessTokenExpiresIn,
+  });
+  reply.setCookie(COOKIE_REFRESH, refreshToken, {
+    ...cookieOpts,
+    maxAge: 7 * 24 * 3600,
+  });
+};
+
+const clearAuthCookies = (reply) => {
+  reply.clearCookie(COOKIE_ACCESS, { path: "/" });
+  reply.clearCookie(COOKIE_REFRESH, { path: "/" });
+};
+
 /**
  * Génère un access token (courte durée) et un refresh token (longue durée)
  * @param {string} userId - ID de l'utilisateur
@@ -103,6 +129,7 @@ export const register = async (request, reply) => {
     });
 
     const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
+    setAuthCookies(reply, tokens.accessToken, tokens.refreshToken, tokens.accessTokenExpiresIn);
 
     reply.type("application/json");
     reply.send({
@@ -110,9 +137,6 @@ export const register = async (request, reply) => {
       message: "Inscription réussie",
       data: {
         user: User.toJSON(user),
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        expiresIn: tokens.accessTokenExpiresIn,
       },
     });
   } catch (error) {
@@ -160,6 +184,7 @@ export const login = async (request, reply) => {
     }
 
     const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
+    setAuthCookies(reply, tokens.accessToken, tokens.refreshToken, tokens.accessTokenExpiresIn);
 
     reply.type("application/json");
     reply.send({
@@ -167,9 +192,6 @@ export const login = async (request, reply) => {
       message: "Connexion réussie",
       data: {
         user: User.toJSON(user),
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        expiresIn: tokens.accessTokenExpiresIn,
       },
     });
   } catch (error) {
@@ -280,6 +302,7 @@ export const googleCallback = async (request, reply) => {
     }
 
     const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
+    setAuthCookies(reply, tokens.accessToken, tokens.refreshToken, tokens.accessTokenExpiresIn);
 
     reply.type("application/json");
     reply.send({
@@ -287,9 +310,6 @@ export const googleCallback = async (request, reply) => {
       message: "Authentification Google réussie",
       data: {
         user: User.toJSON(user),
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        expiresIn: tokens.accessTokenExpiresIn,
       },
     });
   } catch (error) {
@@ -464,14 +484,12 @@ export const adminGoogleCallback = async (request, reply) => {
     }
 
     const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
+    setAuthCookies(reply, tokens.accessToken, tokens.refreshToken, tokens.accessTokenExpiresIn);
 
     reply.type("application/json");
     reply.send({
       success: true,
       message: "Authentification admin Google réussie",
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      expiresIn: tokens.accessTokenExpiresIn,
       user: {
         id: user.id,
         email: user.email,
@@ -546,37 +564,36 @@ export const getMe = async (request, reply) => {
 
 export const logout = async (request, reply) => {
   try {
+    let token = null;
     const authHeader = request.headers.authorization;
-    
     if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1];
-      
+      token = authHeader.split(" ")[1];
+    } else if (request.cookies && request.cookies[COOKIE_ACCESS]) {
+      token = request.cookies[COOKIE_ACCESS];
+    }
+
+    if (token) {
       try {
-        // Décoder le token pour récupérer jti et exp
         const decoded = jwt.decode(token);
-        
         if (decoded && decoded.jti && decoded.exp) {
           const expiresAt = new Date(decoded.exp * 1000);
-          
-          // Blacklister le token
           await BlacklistedToken.blacklist(
             decoded.jti,
             request.user?.id || decoded.userId,
             expiresAt,
             "logout"
           );
-          
           console.log(
             `[AUDIT AUTH] Token blacklisté lors du logout | ` +
             `UserId: ${request.user?.id || decoded.userId} | JTI: ${decoded.jti} | IP: ${request.ip || "unknown"}`
           );
         }
       } catch (error) {
-        // Si le token est invalide, on continue quand même (logout réussi)
         console.warn(`[AUDIT AUTH] Erreur lors du blacklist token (logout):`, error.message);
       }
     }
 
+    clearAuthCookies(reply);
     reply.type("application/json");
     reply.send({
       success: true,
@@ -594,7 +611,9 @@ export const logout = async (request, reply) => {
 
 export const refreshToken = async (request, reply) => {
   try {
-    const { refreshToken: refreshTokenValue } = request.body;
+    const refreshTokenValue =
+      request.cookies?.[COOKIE_REFRESH] ||
+      request.body?.refreshToken;
 
     if (!refreshTokenValue) {
       return reply.code(400).send({
@@ -672,18 +691,13 @@ export const refreshToken = async (request, reply) => {
       );
     }
 
-    // Générer de nouveaux tokens (avec nouveau JTI)
     const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
+    setAuthCookies(reply, tokens.accessToken, tokens.refreshToken, tokens.accessTokenExpiresIn);
 
     reply.type("application/json");
     reply.send({
       success: true,
       message: "Tokens renouvelés",
-      data: {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        expiresIn: tokens.accessTokenExpiresIn,
-      },
     });
   } catch (error) {
     console.error("Erreur lors du refresh token:", error);
