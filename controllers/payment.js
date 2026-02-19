@@ -167,43 +167,21 @@ export const createCheckoutSession = async (request, reply) => {
       });
     }
 
-    // VÉRIFICATION PARFUMS : Valider le minimum de 6 produits parfum (quantité totale)
-    const perfumeValidation = validatePerfumeMinimum(cartItems);
-    
-    // Log pour déboguer (toujours actif pour voir ce qui se passe)
-    console.log("=== PERFUME VALIDATION ===");
-    console.log("Cart items count:", cartItems.length);
-    console.log("Total perfume quantity:", perfumeValidation.totalCount);
-    console.log("Is valid:", perfumeValidation.isValid);
-    console.log("Message:", perfumeValidation.message);
-    console.log("Missing:", perfumeValidation.missing);
-    
-    // Afficher les références des produits dans le panier
-    if (cartItems.length > 0) {
-      console.log("Products in cart:");
-      cartItems.forEach((item, index) => {
-        const product = item?.productId;
-        if (product) {
-          console.log(`  [${index}] Product ID: ${product.id}, Ref: ${product.ref || 'NO REF'}, Nom: ${product.nom || 'NO NAME'}, Quantity: ${item.quantity || 1}`);
-        }
-      });
+    // VÉRIFICATION PARFUMS : minimum 6 produits parfum (quantité totale) — uniquement pour les pros
+    if (isPro) {
+      const perfumeValidation = validatePerfumeMinimum(cartItems);
+      if (!perfumeValidation.isValid) {
+        return reply.code(400).send({
+          success: false,
+          message: perfumeValidation.message || "Vous devez commander au minimum 6 produits parfum.",
+          perfumeValidation: {
+            totalCount: perfumeValidation.totalCount,
+            missing: perfumeValidation.missing,
+            minimumRequired: perfumeValidation.minimumRequired,
+          },
+        });
+      }
     }
-    console.log("============================");
-    
-    if (!perfumeValidation.isValid) {
-      console.log("❌ CHECKOUT BLOQUÉ - Pas assez de produits parfum");
-      return reply.code(400).send({
-        success: false,
-        message: perfumeValidation.message || "Vous devez commander au minimum 6 produits parfum.",
-        perfumeValidation: {
-          totalCount: perfumeValidation.totalCount,
-          missing: perfumeValidation.missing,
-          minimumRequired: perfumeValidation.minimumRequired,
-        },
-      });
-    }
-    
-    console.log("✅ Validation parfums OK - Checkout autorisé");
 
     // Calculer les prix côté backend (SEULE source de vérité)
     // TVA : 0% si pro UE avec vatStatus="validated", sinon 20%

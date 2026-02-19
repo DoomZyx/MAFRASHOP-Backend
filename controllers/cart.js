@@ -9,8 +9,10 @@ export const getCart = async (request, reply) => {
     const cart = await Cart.findByUserId(request.user.id);
     const cartItems = cart || [];
 
-    // Valider les parfums dans le panier (quantité totale)
-    const perfumeValidation = validatePerfumeMinimum(cartItems);
+    // Validation parfums (minimum 6) : uniquement pour les professionnels
+    const perfumeValidation = request.user.isPro
+      ? validatePerfumeMinimum(cartItems)
+      : { isValid: true, totalCount: 0, missing: 0, message: null, minimumRequired: 6 };
 
     reply.type("application/json");
     return reply.send({
