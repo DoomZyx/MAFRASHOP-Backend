@@ -7,3 +7,7 @@ node_modules
 .env.local
 .env.*.local
 MafraProducts_cleaned.csv
+ecosystem.config.cjs
+invoices/invoice-FACT-2026-0006.pdf
+invoices/invoice-FACT-2026-0007.pdf
+package-lock.json
