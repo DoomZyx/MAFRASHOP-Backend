@@ -10,10 +10,11 @@ const COOKIE_REFRESH = "mafra_rt";
 const isProduction = process.env.NODE_ENV === "production";
 
 const setAuthCookies = (reply, accessToken, refreshToken, accessTokenExpiresIn) => {
+  // En production, sameSite: "none" pour que le cookie soit envoyé quand le front est sur un autre domaine (ex. Vercel)
   const cookieOpts = {
     httpOnly: true,
     secure: isProduction,
-    sameSite: "lax",
+    sameSite: isProduction ? "none" : "lax",
     path: "/",
   };
   reply.setCookie(COOKIE_ACCESS, accessToken, {
@@ -27,10 +28,14 @@ const setAuthCookies = (reply, accessToken, refreshToken, accessTokenExpiresIn) 
 };
 
 const clearAuthCookies = (reply) => {
-  reply.clearCookie(COOKIE_ACCESS, { path: "/" });
-  reply.clearCookie(COOKIE_REFRESH, { path: "/" });
+  const clearOpts = { path: "/" };
+  if (isProduction) {
+    clearOpts.secure = true;
+    clearOpts.sameSite = "none";
+  }
+  reply.clearCookie(COOKIE_ACCESS, clearOpts);
+  reply.clearCookie(COOKIE_REFRESH, clearOpts);
 };
-
 /**
  * Génère un access token (courte durée) et un refresh token (longue durée)
  * @param {string} userId - ID de l'utilisateur
