@@ -44,10 +44,14 @@ const fastify = Fastify({
 });
 
 // CORS + cookies httpOnly : règles strictes (credentials: true)
-// 1) Front : credentials "include" sur chaque fetch
+// 1) Front : credentials "include" sur chaque fetch (auth, cart, products, etc.)
 // 2) Backend : Access-Control-Allow-Credentials: true (ci-dessous)
 // 3) Jamais Access-Control-Allow-Origin: * avec credentials -> on renvoie l'origine exacte
 // 4) Cookie : Secure; SameSite=None en prod (voir setAuthCookies dans auth controller)
+//
+// CORS_ORIGINS : une origine par valeur, avec protocole (https://). Exemple preprod :
+//   CORS_ORIGINS=https://front.preprod.mymafrashop.com,https://www.front.preprod.mymafrashop.com,https://preprod.mymafrashop.com
+// (ajouter chaque URL depuis laquelle le front est ouvert, sinon le navigateur bloque la réponse.)
 
 // Parser CORS_ORIGINS (origines exactes, pas de *)
 const rawOrigins = process.env.CORS_ORIGINS
