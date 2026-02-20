@@ -43,52 +43,45 @@ const fastify = Fastify({
   logger: false, // Désactiver les logs Fastify (y compris "Server listening")
 });
 
-// Parser CORS_ORIGINS
-const corsOrigins = process.env.CORS_ORIGINS
+// CORS + cookies httpOnly : règles strictes (credentials: true)
+// 1) Front : credentials "include" sur chaque fetch
+// 2) Backend : Access-Control-Allow-Credentials: true (ci-dessous)
+// 3) Jamais Access-Control-Allow-Origin: * avec credentials -> on renvoie l'origine exacte
+// 4) Cookie : Secure; SameSite=None en prod (voir setAuthCookies dans auth controller)
+
+// Parser CORS_ORIGINS (origines exactes, pas de *)
+const rawOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map(o => o.trim()).filter(o => o.length > 0)
   : [];
+const corsOrigins = rawOrigins.filter(o => o !== "*");
 
-// Normaliser les origines (supprimer trailing slash, normaliser)
 const normalizeOrigin = (url) => {
   if (!url) return url;
   try {
     const urlObj = new URL(url);
-    // Reconstruire l'URL sans trailing slash : protocol + host + port (sans pathname)
     let normalized = `${urlObj.protocol}//${urlObj.host}`;
-    // Si le pathname existe et n'est pas juste "/", l'ajouter sans trailing slash
-    if (urlObj.pathname && urlObj.pathname !== '/') {
-      normalized += urlObj.pathname.replace(/\/$/, '');
+    if (urlObj.pathname && urlObj.pathname !== "/") {
+      normalized += urlObj.pathname.replace(/\/$/, "");
     }
     return normalized;
   } catch {
-    // Fallback simple si URL invalide : supprimer trailing slash
-    return url.replace(/\/$/, '');
+    return url.replace(/\/$/, "");
   }
 };
 
 const normalizedCorsOrigins = corsOrigins.map(normalizeOrigin);
 
-// Enregistrer CORS
 await fastify.register(cors, {
   origin: (origin, cb) => {
-    // Autorise Postman / curl / server-side requests
-    if (!origin) {
-      return cb(null, true);
-    }
+    if (!origin) return cb(null, true);
 
     const normalizedOrigin = normalizeOrigin(origin);
-    
-    // Vérifier avec l'origine normalisée
     if (normalizedCorsOrigins.includes(normalizedOrigin)) {
-      return cb(null, true);
+      return cb(null, normalizedOrigin);
     }
-
-    // Vérifier aussi avec l'origine brute (au cas où)
     if (corsOrigins.includes(origin)) {
-      console.log("CORS: Origin autorisée (brute)");
-      return cb(null, true);
+      return cb(null, origin);
     }
-    // Retourner null au lieu d'une erreur pour que Fastify renvoie quand même les headers CORS
     return cb(null, false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
