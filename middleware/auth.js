@@ -23,6 +23,7 @@ const COOKIE_ACCESS = "mafra_at";
 
 export const verifyToken = async (request, reply) => {
   const clientIp = request.ip || request.headers["x-forwarded-for"] || "unknown";
+  reply.header("Cache-Control", "no-store");
 
   try {
     let token = null;
