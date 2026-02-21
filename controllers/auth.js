@@ -551,6 +551,7 @@ export const getMe = async (request, reply) => {
     }
 
     reply.type("application/json");
+    reply.header('Cache-Control', 'no-store')
     reply.send({
       success: true,
       data: {
