@@ -370,6 +370,7 @@ export const adminLogin = async (request, reply) => {
     }
 
     const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
+    setAuthCookies(reply, tokens.accessToken, tokens.refreshToken, tokens.accessTokenExpiresIn);
 
     reply.type("application/json");
     reply.send({
