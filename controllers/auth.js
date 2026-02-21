@@ -4,6 +4,7 @@ import { validateCompanyAsync } from "../middleware/auth.js";
 import BlacklistedToken from "../models/blacklistedTokens.js";
 import { generateJTI } from "../models/blacklistedTokens.js";
 import UserSession from "../models/userSessions.js";
+import { sendProRequest } from "../services/notifyAdmin.js";
 
 const COOKIE_ACCESS = "mafra_at";
 const COOKIE_REFRESH = "mafra_rt";
@@ -830,6 +831,11 @@ export const requestPro = async (request, reply) => {
     };
 
     await User.update(user.id, updateData);
+
+    // Notification admin (email propriétaire)
+    sendProRequest(user.email).catch((err) =>
+      console.error("[auth] Erreur envoi notification admin demande pro:", err.message)
+    );
 
     // Lancement de la validation INSEE uniquement si SIRET fourni
     if (siret) {

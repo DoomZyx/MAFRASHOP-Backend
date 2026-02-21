@@ -5,9 +5,11 @@ import Invoice from "../models/invoices.js";
 import Delivery from "../models/deliveries.js";
 import Product from "../models/products.js";
 import StripeWebhookEvent from "../models/stripeWebhookEvents.js";
+import User from "../models/user.js";
 import pool from "../db.js";
 import { calculateCartTotal, getDeliveryFee } from "../utils/priceCalculation.js";
 import { validatePerfumeMinimum } from "../utils/perfumeValidation.js";
+import { sendNewOrder } from "../services/notifyAdmin.js";
 
 if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error("STRIPE_SECRET_KEY n'est pas défini dans les variables d'environnement");
@@ -556,6 +558,16 @@ export const stripeWebhook = async (request, reply) => {
           console.log(
             `[WEBHOOK] ✅ Commande ${order.id} créée avec succès depuis webhook Stripe pour session ${session.id}`
           );
+
+          // Notification admin (email propriétaire)
+          User.findById(userId)
+            .then((user) => {
+              const userName = user
+                ? [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email
+                : "Utilisateur";
+              return sendNewOrder(order.id, userName);
+            })
+            .catch((err) => console.error("[WEBHOOK] Erreur récupération user pour notification admin:", err.message));
 
           // ============================================
           // POST-CRÉATION : Livraison, Facture, Panier
