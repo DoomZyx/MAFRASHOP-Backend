@@ -14,7 +14,7 @@ const setAuthCookies = (reply, accessToken, refreshToken, accessTokenExpiresIn) 
   const cookieOpts = {
     httpOnly: true,
     secure: isProduction,
-    sameSite: isProduction ? "none" : "lax",
+    sameSite: "lax",
     path: "/",
   };
   reply.setCookie(COOKIE_ACCESS, accessToken, {
