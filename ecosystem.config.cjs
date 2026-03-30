@@ -4,8 +4,8 @@ module.exports = {
       name: "preprod",
       script: "./server.js",
       env: {
-        PORT: 3000,
-        NODE_ENV: "development",
+        PORT: 3001,
+        NODE_ENV: "preprod",
       },
     },
     {
