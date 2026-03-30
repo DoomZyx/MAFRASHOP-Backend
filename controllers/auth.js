@@ -6,22 +6,22 @@ import { generateJTI } from "../models/blacklistedTokens.js";
 import UserSession from "../models/userSessions.js";
 import { sendProRequest } from "../services/notifyAdmin.js";
 
-const COOKIE_ACCESS = "mafra_at";
-const COOKIE_REFRESH = "mafra_rt";
-const isProduction = process.env.NODE_ENV === "production";
+const COOKIE_ACCESS = "mafra_at"; const COOKIE_REFRESH = "mafra_rt"; const isProduction = process.env.NODE_ENV === "production"; const isSecure = process.env.COOKIE_SECURE === "true";
 
 const setAuthCookies = (reply, accessToken, refreshToken, accessTokenExpiresIn) => {
-  // En production, sameSite: "none" pour que le cookie soit envoyé quand le front est sur un autre domaine (ex. Vercel)
   const cookieOpts = {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax",
+    secure: isSecure,
+    sameSite: isSecure ? "none" : "lax",
+    domain: isSecure ? ".mafraest.com" : undefined,
     path: "/",
   };
+
   reply.setCookie(COOKIE_ACCESS, accessToken, {
     ...cookieOpts,
     maxAge: accessTokenExpiresIn,
   });
+
   reply.setCookie(COOKIE_REFRESH, refreshToken, {
     ...cookieOpts,
     maxAge: 7 * 24 * 3600,
