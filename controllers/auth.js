@@ -11,8 +11,8 @@ const COOKIE_ACCESS = "mafra_at"; const COOKIE_REFRESH = "mafra_rt"; const isPro
 const setAuthCookies = (reply, accessToken, refreshToken, accessTokenExpiresIn) => {
   const cookieOpts = {
     httpOnly: true,
-    secure: isSecure,
-    sameSite: isSecure ? "none" : "lax",
+    secure: isSecure,                     // true uniquement en prod
+    sameSite: isSecure ? "none" : "lax", // l'important pour cross-site
     domain: isSecure ? ".mafraest.com" : undefined,
     path: "/",
   };
