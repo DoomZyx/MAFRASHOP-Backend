@@ -15,9 +15,8 @@ export default async function paymentRoutes(fastify, options) {
     "application/json",
     { parseAs: "string" },
     function (request, body, done) {
-      // Pour la route webhook uniquement, garder le body en string brute
-      // Utiliser routerPath ou url pour identifier la route
-      const isWebhookRoute = 
+      // Webhook Stripe : body brut pour la signature (route finale = /api/payment/webhook)
+      const isWebhookRoute =
         (request.routerPath && request.routerPath.includes("/webhook")) ||
         (request.url && request.url.includes("/payment/webhook"));
       
@@ -35,19 +34,16 @@ export default async function paymentRoutes(fastify, options) {
     }
   );
 
-  fastify.post("/payment/webhook", async (request, reply) => {
-    // Le body est maintenant une string brute (non parsée) grâce au parser personnalisé
-    // C'est nécessaire pour la vérification de signature Stripe
+  const runStripeWebhook = async (request, reply) => {
     if (typeof request.body === "string") {
       request.rawBody = request.body;
     } else {
-      // Fallback : si le body a été parsé, essayer de le reconstruire
-      // (ne devrait pas arriver avec le parser personnalisé)
       request.rawBody = JSON.stringify(request.body || {});
     }
-    
     return stripeWebhook(request, reply);
-  });
+  };
+
+  fastify.post("/payment/webhook", runStripeWebhook);
 
   // Routes protégées
   fastify.post(

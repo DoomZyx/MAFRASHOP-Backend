@@ -19,13 +19,12 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 /**
  * Crée une session de paiement Stripe Checkout
- * 
+ *
  * Flow sécurisé :
- * 1. Calcul des prix côté backend (SEULE source de vérité)
- * 2. Création de l'Order en base AVANT redirection Stripe
- * 3. Stockage du snapshot des items et du montant attendu
- * 4. Stripe gère la TVA automatiquement (automatic_tax)
- * 5. Le webhook vérifie la cohérence des montants
+ * 1. Calcul des prix côté backend (source de vérité)
+ * 2. Commande `pending` + lignes `order_items` en base (évite metadata Stripe > 500 car. par clé)
+ * 3. Session Stripe avec metadata.orderId, expectedAmount, etc.
+ * 4. Webhook `checkout.session.completed` : passage à `paid`, déstockage, facture, livraison
  */
 /**
  * Valide le format d'un sessionId Stripe
@@ -113,13 +112,38 @@ const validateShippingAddress = (address) => {
   return sanitized;
 };
 
+/**
+ * Récupère une commande pending créée au checkout (métadonnée orderId).
+ * Gère la course rare webhook avant updateStripeSessionId : on attache alors la session.
+ */
+const resolvePendingOrderFromSessionMetadata = async (session) => {
+  const orderIdRaw = session.metadata?.orderId;
+  if (!orderIdRaw) return null;
+  const orderId = parseInt(String(orderIdRaw), 10);
+  const userIdMeta =
+    session.metadata?.userId != null ? parseInt(String(session.metadata.userId), 10) : NaN;
+  if (!orderId || Number.isNaN(orderId) || Number.isNaN(userIdMeta)) return null;
+
+  const candidate = await Order.findById(String(orderId));
+  if (!candidate || candidate.status !== "pending") return null;
+  if (parseInt(String(candidate.userId), 10) !== userIdMeta) return null;
+
+  if (!candidate.stripeSessionId) {
+    await Order.updateStripeSessionId(candidate.id, session.id);
+    return Order.findByStripeSessionId(session.id);
+  }
+  if (candidate.stripeSessionId === session.id) {
+    return candidate;
+  }
+  return null;
+};
+
 export const createCheckoutSession = async (request, reply) => {
+  let pendingOrder = null;
   try {
     const userId = request.user.id;
     const { shippingAddress: rawShippingAddress } = request.body;
     const isPro = request.user.isPro || false;
-
-    // Plus de vérification de commandes pending : on ne crée la commande qu'après paiement
 
     // Valider et sanitizer l'adresse de livraison
     const shippingAddress = validateShippingAddress(rawShippingAddress);
@@ -253,8 +277,23 @@ export const createCheckoutSession = async (request, reply) => {
       totalPrice: item.totalPriceHT, // Total HT en euros
     }));
 
+    // Commande pending + lignes en base AVANT Stripe : les métadonnées Stripe sont limitées
+    // à 500 caractères par clé — orderItems en JSON dépassait souvent et cassait le webhook.
+    pendingOrder = await Order.create({
+      userId,
+      stripePaymentIntentId: null,
+      stripeSessionId: null,
+      status: "pending",
+      totalAmount: totalWithDelivery,
+      totalAmountHT,
+      expectedAmount: totalInCentsWithDelivery,
+      deliveryFee,
+      isPro,
+      shippingAddress: shippingAddress || null,
+      items: orderItems,
+    });
+
     // Créer la session Stripe Checkout
-    // La commande sera créée uniquement après validation du paiement via webhook
     // automatic_tax désactivé : les prix sont déjà calculés côté backend (TTC pour tous)
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -266,19 +305,20 @@ export const createCheckoutSession = async (request, reply) => {
       customer_email: request.user.email,
       metadata: {
         userId: userId.toString(),
+        orderId: pendingOrder.id.toString(),
         isPro: isPro.toString(),
         totalAmount: totalWithDelivery.toString(),
         totalAmountHT: totalAmountHT.toString(),
         expectedAmount: totalInCentsWithDelivery.toString(),
         deliveryFee: deliveryFee.toString(),
         vatRate: vatRate.toString(),
-        shippingAddress: shippingAddress ? JSON.stringify(shippingAddress) : "",
-        orderItems: JSON.stringify(orderItems),
       },
       shipping_address_collection: {
         allowed_countries: ["FR", "BE", "CH", "LU"],
       },
     });
+
+    await Order.updateStripeSessionId(pendingOrder.id, session.id);
 
     reply.type("application/json");
     return reply.send({
@@ -289,6 +329,16 @@ export const createCheckoutSession = async (request, reply) => {
       },
     });
   } catch (error) {
+    if (pendingOrder?.id) {
+      try {
+        await Order.updateStatus(pendingOrder.id, "cancelled");
+      } catch (cancelErr) {
+        console.error(
+          "Impossible d'annuler la commande pending après échec Stripe:",
+          cancelErr.message
+        );
+      }
+    }
     console.error("Erreur lors de la création de la session Stripe:", error);
     reply.type("application/json");
     return reply.code(500).send({
@@ -343,7 +393,8 @@ export const stripeWebhook = async (request, reply) => {
   // 🔐 PROTECTION REPLAY WEBHOOK : Rejeter les événements trop anciens (> 5 minutes)
   // Protection contre rejeu d'événements interceptés
   const eventAge = Date.now() / 1000 - event.created;
-  const MAX_EVENT_AGE_SECONDS = 5 * 60; // 5 minutes
+  // Stripe peut livrer avec délai ; 5 min rejetait des événements légitimes
+  const MAX_EVENT_AGE_SECONDS = 60 * 60; // 1 heure
   
   if (eventAge > MAX_EVENT_AGE_SECONDS) {
     console.warn(
@@ -364,10 +415,12 @@ export const stripeWebhook = async (request, reply) => {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 
-      // Vérifier si une commande existe déjà (idempotence)
       let order = await Order.findByStripeSessionId(session.id);
+      if (!order) {
+        order = await resolvePendingOrderFromSessionMetadata(session);
+      }
 
-      // Si la commande n'existe pas, la créer à partir des métadonnées Stripe
+      // Legacy : anciennes sessions sans orderId (orderItems entiers dans metadata, souvent > 500 car.)
       if (!order) {
         // Vérifier que les métadonnées nécessaires sont présentes
         if (!session.metadata || !session.metadata.userId) {
@@ -405,21 +458,58 @@ export const stripeWebhook = async (request, reply) => {
             });
           }
 
+          let orderItems;
+          try {
+            orderItems = session.metadata.orderItems
+              ? JSON.parse(session.metadata.orderItems)
+              : [];
+          } catch (parseErr) {
+            console.error(
+              `[WEBHOOK] orderItems metadata invalide (session ${session.id}): ${parseErr.message}`
+            );
+            await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+            return reply.code(400).send({
+              received: true,
+              error: "orderItems invalides",
+            });
+          }
+          if (!Array.isArray(orderItems) || orderItems.length === 0) {
+            console.error(
+              `Aucune commande en base et pas d'orderItems legacy pour session ${session.id} (event ${event.id})`
+            );
+            await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+            return reply.send({ received: true, orphan: true });
+          }
+
           const isPro = session.metadata.isPro === "true";
           const totalAmount = parseFloat(session.metadata.totalAmount);
           const totalAmountHT = parseFloat(session.metadata.totalAmountHT);
           const expectedAmount = parseInt(session.metadata.expectedAmount, 10);
           const deliveryFee = parseFloat(session.metadata.deliveryFee || "0");
-          const shippingAddress = session.metadata.shippingAddress 
-            ? JSON.parse(session.metadata.shippingAddress) 
-            : (session.shipping_details?.address ? {
-                line1: session.shipping_details.address.line1,
-                line2: session.shipping_details.address.line2 || null,
-                city: session.shipping_details.address.city,
-                postal_code: session.shipping_details.address.postal_code,
-                country: session.shipping_details.address.country,
-              } : null);
-          const orderItems = JSON.parse(session.metadata.orderItems || "[]");
+
+          let shippingAddress = null;
+          if (session.metadata.shippingAddress) {
+            try {
+              shippingAddress = JSON.parse(session.metadata.shippingAddress);
+            } catch (addrErr) {
+              console.error(
+                `[WEBHOOK] shippingAddress metadata invalide (session ${session.id}): ${addrErr.message}`
+              );
+              await StripeWebhookEvent.markAsOrphan(event.id, event.type);
+              return reply.code(400).send({
+                received: true,
+                error: "shippingAddress invalide",
+              });
+            }
+          } else if (session.shipping_details?.address) {
+            shippingAddress = {
+              line1: session.shipping_details.address.line1,
+              line2: session.shipping_details.address.line2 || null,
+              city: session.shipping_details.address.city,
+              postal_code: session.shipping_details.address.postal_code,
+              country: session.shipping_details.address.country,
+            };
+          }
 
           // ============================================
           // VALIDATION 2 : Vérifier le montant total (totalAmount)

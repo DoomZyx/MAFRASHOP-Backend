@@ -164,26 +164,30 @@ fastify.setErrorHandler((error, request, reply) => {
   });
 });
 
-// Enregistrer les routes avec le préfixe /api
-fastify.register(async function (fastify) {
-fastify.register(productsRoutes);
-fastify.register(authRoutes);
-fastify.register(cartRoutes);
-fastify.register(favoritesRoutes);
-fastify.register(websocketRoutes);
-fastify.register(paymentRoutes);
-fastify.register(ordersRoutes);
-fastify.register(invoicesRoutes);
-fastify.register(deliveriesRoutes);
-fastify.register(adminProductsRoutes);
-fastify.register(adminStockRoutes);
-fastify.register(adminStatsRoutes);
-fastify.register(adminOrdersRoutes);
-fastify.register(adminInvoicesRoutes);
-fastify.register(adminUploadRoutes);
-fastify.register(adminProMinimumQuantitiesRoutes);
-fastify.register(contactRoutes);
-}, { prefix: "/api" });
+// Toutes les routes HTTP exposées sous /api/... (aligné front + Stripe webhook public)
+// Nginx : proxy_pass sans slash final sur l’upstream pour préserver /api dans l’URI (voir deploy/nginx/*.conf)
+await fastify.register(
+  async function (fastify) {
+    await fastify.register(productsRoutes);
+    await fastify.register(authRoutes);
+    await fastify.register(cartRoutes);
+    await fastify.register(favoritesRoutes);
+    await fastify.register(websocketRoutes);
+    await fastify.register(paymentRoutes);
+    await fastify.register(ordersRoutes);
+    await fastify.register(invoicesRoutes);
+    await fastify.register(deliveriesRoutes);
+    await fastify.register(adminProductsRoutes);
+    await fastify.register(adminStockRoutes);
+    await fastify.register(adminStatsRoutes);
+    await fastify.register(adminOrdersRoutes);
+    await fastify.register(adminInvoicesRoutes);
+    await fastify.register(adminUploadRoutes);
+    await fastify.register(adminProMinimumQuantitiesRoutes);
+    await fastify.register(contactRoutes);
+  },
+  { prefix: "/api" }
+);
 
 // Initialiser la connexion à la base de données
 await connectDB();
