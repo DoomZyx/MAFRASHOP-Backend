@@ -1,4 +1,5 @@
 import pool from "../db.js";
+import { PICKUP_STORE_ADDRESS } from "../constants/pickupStore.js";
 
 // Mapper une livraison
 const mapDelivery = (row) => {
@@ -33,17 +34,30 @@ function calculateEstimatedDeliveryDate(isPro) {
   return estimatedDate.toISOString().split("T")[0];
 }
 
+/** Date indicative « prêt au retrait » pour le click & collect (24h) */
+function calculateEstimatedPickupReadyDate() {
+  const estimatedDate = new Date();
+  estimatedDate.setHours(estimatedDate.getHours() + 24);
+  return estimatedDate.toISOString().split("T")[0];
+}
+
 class Delivery {
-  // Créer une livraison depuis une commande
-  static async createFromOrder(orderId, isPro) {
-    const estimatedDeliveryDate = calculateEstimatedDeliveryDate(isPro);
-    
+  // Créer une livraison depuis une commande (expédition ou suivi retrait magasin)
+  static async createFromOrder(orderId, isPro, fulfillmentType = "shipping") {
+    const isPickup = fulfillmentType === "pickup";
+    const estimatedDeliveryDate = isPickup
+      ? calculateEstimatedPickupReadyDate()
+      : calculateEstimatedDeliveryDate(isPro);
+    const notes = isPickup
+      ? `Click & collect — retrait au magasin : ${PICKUP_STORE_ADDRESS}.`
+      : null;
+
     const result = await pool.query(
       `INSERT INTO deliveries (
-        order_id, status, estimated_delivery_date, created_at, updated_at
-      ) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        order_id, status, estimated_delivery_date, notes, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *`,
-      [orderId, "pending", estimatedDeliveryDate]
+      [orderId, "pending", estimatedDeliveryDate, notes]
     );
 
     return mapDelivery(result.rows[0]);
@@ -65,10 +79,10 @@ class Delivery {
   }
 
   /** Crée une livraison si absente (webhook idempotent / retry Stripe). */
-  static async ensureForOrder(orderId, isPro) {
+  static async ensureForOrder(orderId, isPro, fulfillmentType = "shipping") {
     const existing = await this.findByOrderId(orderId);
     if (existing) return existing;
-    return this.createFromOrder(orderId, isPro);
+    return this.createFromOrder(orderId, isPro, fulfillmentType);
   }
 
   // Trouver toutes les livraisons d'un utilisateur (via order_id)

@@ -14,6 +14,7 @@ const mapOrder = (row) => {
     expectedAmount: row.expected_amount ? parseInt(row.expected_amount, 10) : null,
     deliveryFee: row.delivery_fee != null ? parseFloat(row.delivery_fee) : 0,
     isPro: row.is_pro || false,
+    fulfillmentType: row.fulfillment_type === "pickup" ? "pickup" : "shipping",
     shippingAddress: row.shipping_address,
     billingAddress: row.billing_address,
     createdAt: row.created_at,
@@ -51,6 +52,7 @@ class Order {
       totalAmountHT = null,
       expectedAmount,
       deliveryFee = 0,
+      fulfillmentType = "shipping",
       shippingAddress,
       billingAddress,
       items,
@@ -61,11 +63,13 @@ class Order {
       await client.query("BEGIN");
 
       // Créer la commande
+      const ft = fulfillmentType === "pickup" ? "pickup" : "shipping";
+
       const orderResult = await client.query(
         `INSERT INTO orders (
           user_id, stripe_payment_intent_id, stripe_session_id, status,
-          total_amount, total_amount_ht, expected_amount, delivery_fee, is_pro, shipping_address, billing_address, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          total_amount, total_amount_ht, expected_amount, delivery_fee, is_pro, fulfillment_type, shipping_address, billing_address, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING *`,
         [
           userId,
@@ -77,6 +81,7 @@ class Order {
           expectedAmount,
           deliveryFee,
           orderData.isPro || false,
+          ft,
           shippingAddress ? JSON.stringify(shippingAddress) : null,
           billingAddress ? JSON.stringify(billingAddress) : null,
         ]

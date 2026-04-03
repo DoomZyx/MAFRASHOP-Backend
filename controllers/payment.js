@@ -141,6 +141,9 @@ const validateShippingAddress = (address) => {
   return sanitized;
 };
 
+const normalizeFulfillmentType = (raw) =>
+  raw === "pickup" ? "pickup" : "shipping";
+
 /**
  * Récupère une commande pending créée au checkout (métadonnée orderId).
  * Gère la course rare webhook avant updateStripeSessionId : on attache alors la session.
@@ -171,11 +174,16 @@ export const createCheckoutSession = async (request, reply) => {
   let pendingOrder = null;
   try {
     const userId = request.user.id;
-    const { shippingAddress: rawShippingAddress } = request.body;
+    const { shippingAddress: rawShippingAddress, fulfillmentType: rawFulfillment } =
+      request.body || {};
     const isPro = request.user.isPro || false;
+    const fulfillmentType = normalizeFulfillmentType(rawFulfillment);
 
-    // Valider et sanitizer l'adresse de livraison
-    const shippingAddress = validateShippingAddress(rawShippingAddress);
+    // Livraison : adresse optionnelle côté app (complétée souvent par Stripe) ; retrait : pas d'adresse
+    const shippingAddress =
+      fulfillmentType === "pickup"
+        ? null
+        : validateShippingAddress(rawShippingAddress);
 
     // Récupérer le panier
     const cartItems = await Cart.findByUserId(userId);
@@ -249,7 +257,8 @@ export const createCheckoutSession = async (request, reply) => {
       });
     }
 
-    const deliveryFee = getDeliveryFee(cartCalculation.totalTTC);
+    const deliveryFee =
+      fulfillmentType === "pickup" ? 0 : getDeliveryFee(cartCalculation.totalTTC);
     const deliveryFeeInCents = Math.round(deliveryFee * 100);
     // Utiliser la somme des centimes (arrondis individuellement) pour correspondre à Stripe
     const totalInCentsWithDelivery = cartCalculation.totalInCents + deliveryFeeInCents;
@@ -318,13 +327,14 @@ export const createCheckoutSession = async (request, reply) => {
       expectedAmount: totalInCentsWithDelivery,
       deliveryFee,
       isPro,
+      fulfillmentType,
       shippingAddress: shippingAddress || null,
       items: orderItems,
     });
 
     // Créer la session Stripe Checkout
     // automatic_tax désactivé : les prix sont déjà calculés côté backend (TTC pour tous)
-    const session = await stripe.checkout.sessions.create({
+    const sessionPayload = {
       payment_method_types: ["card"],
       line_items: lineItems,
       mode: "payment",
@@ -341,11 +351,16 @@ export const createCheckoutSession = async (request, reply) => {
         expectedAmount: totalInCentsWithDelivery.toString(),
         deliveryFee: deliveryFee.toString(),
         vatRate: vatRate.toString(),
+        fulfillmentType,
       },
-      shipping_address_collection: {
+    };
+    if (fulfillmentType === "shipping") {
+      sessionPayload.shipping_address_collection = {
         allowed_countries: ["FR", "BE", "CH", "LU"],
-      },
-    });
+      };
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionPayload);
 
     await Order.updateStripeSessionId(pendingOrder.id, session.id);
 
@@ -668,6 +683,10 @@ export const stripeWebhook = async (request, reply) => {
           // ============================================
           // CRÉATION DE LA COMMANDE
           // ============================================
+          const legacyFulfillment = normalizeFulfillmentType(
+            session.metadata?.fulfillmentType
+          );
+
           order = await Order.create({
             userId,
             stripeSessionId: session.id,
@@ -677,6 +696,7 @@ export const stripeWebhook = async (request, reply) => {
             expectedAmount: expectedAmountInCents,
             deliveryFee,
             isPro,
+            fulfillmentType: legacyFulfillment,
             shippingAddress,
             items: orderItems,
           });
@@ -727,7 +747,11 @@ export const stripeWebhook = async (request, reply) => {
           // Créer automatiquement la livraison avec date estimée
           // Tous les utilisateurs : 72h max
           try {
-            const delivery = await Delivery.ensureForOrder(order.id, order.isPro);
+            const delivery = await Delivery.ensureForOrder(
+              order.id,
+              order.isPro,
+              order.fulfillmentType || "shipping"
+            );
             if (delivery) {
               console.log(
                 `[WEBHOOK] Livraison assurée pour la commande ${order.id} ` +
@@ -757,7 +781,11 @@ export const stripeWebhook = async (request, reply) => {
         const ordRetry = await Order.findByStripeSessionId(session.id);
         if (ordRetry?.status === "paid") {
           try {
-            await Delivery.ensureForOrder(ordRetry.id, ordRetry.isPro);
+            await Delivery.ensureForOrder(
+              ordRetry.id,
+              ordRetry.isPro,
+              ordRetry.fulfillmentType || "shipping"
+            );
           } catch (e) {
             console.error(`[WEBHOOK] ensure livraison (idempotent): ${e.message}`);
           }
@@ -768,7 +796,11 @@ export const stripeWebhook = async (request, reply) => {
 
       if (order.status === "paid") {
         try {
-          await Delivery.ensureForOrder(order.id, order.isPro);
+          await Delivery.ensureForOrder(
+            order.id,
+            order.isPro,
+            order.fulfillmentType || "shipping"
+          );
         } catch (e) {
           console.error(`[WEBHOOK] ensure livraison (déjà payée): ${e.message}`);
         }
@@ -928,7 +960,11 @@ export const stripeWebhook = async (request, reply) => {
         // Créer automatiquement la livraison avec date estimée
         // Tous les utilisateurs : 72h max
         try {
-          const delivery = await Delivery.ensureForOrder(order.id, order.isPro);
+          const delivery = await Delivery.ensureForOrder(
+            order.id,
+            order.isPro,
+            order.fulfillmentType || "shipping"
+          );
           if (delivery) {
             console.log(
               `Livraison assurée pour la commande ${order.id} ` +
