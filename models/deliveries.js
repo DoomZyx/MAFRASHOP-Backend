@@ -64,6 +64,13 @@ class Delivery {
     return mapDelivery(result.rows[0]);
   }
 
+  /** Crée une livraison si absente (webhook idempotent / retry Stripe). */
+  static async ensureForOrder(orderId, isPro) {
+    const existing = await this.findByOrderId(orderId);
+    if (existing) return existing;
+    return this.createFromOrder(orderId, isPro);
+  }
+
   // Trouver toutes les livraisons d'un utilisateur (via order_id)
   static async findByUserId(userId) {
     const result = await pool.query(

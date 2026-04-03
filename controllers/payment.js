@@ -17,6 +17,35 @@ if (!process.env.STRIPE_SECRET_KEY) {
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+if (
+  process.env.NODE_ENV === "production" &&
+  process.env.STRIPE_SECRET_KEY?.startsWith("sk_test")
+) {
+  console.warn(
+    "[STRIPE] STRIPE_SECRET_KEY est une clé test (sk_test_) alors que NODE_ENV=production — les paiements réels échoueront ou resteront en mode test."
+  );
+}
+
+const logStripeError = (context, error) => {
+  const raw = error?.raw || {};
+  const payload = {
+    context,
+    type: error?.type || raw.type,
+    code: error?.code || raw.code,
+    message: error?.message || raw.message,
+    statusCode: error?.statusCode,
+    requestId: error?.requestId || raw.request_id,
+    docUrl: raw.doc_url,
+  };
+  console.error(`[STRIPE] ${context}:`, JSON.stringify(payload, null, 2));
+  if (error?.statusCode === 403) {
+    console.error(
+      "[STRIPE] 403 = refus côté Stripe (clé API). Vérifier : clé secrète complète (pas une clé restreinte " +
+        "sans permission Checkout Sessions), même mode test/live que le dashboard, compte activé."
+    );
+  }
+};
+
 /**
  * Crée une session de paiement Stripe Checkout
  *
@@ -339,12 +368,24 @@ export const createCheckoutSession = async (request, reply) => {
         );
       }
     }
-    console.error("Erreur lors de la création de la session Stripe:", error);
+    logStripeError("createCheckoutSession", error);
     reply.type("application/json");
-    return reply.code(500).send({
+    const isStripeErr = error?.type?.startsWith?.("Stripe") || error?.raw;
+    const status =
+      isStripeErr && (error.statusCode === 401 || error.statusCode === 403)
+        ? 502
+        : 500;
+    const clientMsg =
+      error?.statusCode === 403
+        ? "Paiement indisponible : configuration Stripe refusée (clé API ou permissions)."
+        : "Erreur lors de la création de la session de paiement";
+    return reply.code(status).send({
       success: false,
-      message: "Erreur lors de la création de la session de paiement",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      message: clientMsg,
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
     });
   }
 };
@@ -686,17 +727,16 @@ export const stripeWebhook = async (request, reply) => {
           // Créer automatiquement la livraison avec date estimée
           // Tous les utilisateurs : 72h max
           try {
-            const delivery = await Delivery.createFromOrder(order.id, order.isPro);
+            const delivery = await Delivery.ensureForOrder(order.id, order.isPro);
             if (delivery) {
               console.log(
-                `[WEBHOOK] Livraison créée pour la commande ${order.id} ` +
+                `[WEBHOOK] Livraison assurée pour la commande ${order.id} ` +
                 `(date estimée: ${delivery.estimatedDeliveryDate}, ` +
                 `type: ${order.isPro ? "Pro" : "Particulier"} - 72h)`
               );
             }
           } catch (deliveryError) {
-            // Ne pas bloquer le processus si la création de livraison échoue
-            console.error(`[WEBHOOK] Erreur lors de la création de la livraison pour la commande ${order.id}:`, deliveryError);
+            console.error(`[WEBHOOK] Erreur lors de la livraison pour la commande ${order.id}:`, deliveryError);
           }
 
           console.log(`[WEBHOOK] ✅ Commande ${order.id} complètement finalisée (livraison + facture + panier vidé)`);
@@ -714,12 +754,24 @@ export const stripeWebhook = async (request, reply) => {
       eventMarkResult = await StripeWebhookEvent.tryMarkAsProcessed(event.id, event.type, order.id);
       
       if (eventMarkResult.alreadyProcessed) {
+        const ordRetry = await Order.findByStripeSessionId(session.id);
+        if (ordRetry?.status === "paid") {
+          try {
+            await Delivery.ensureForOrder(ordRetry.id, ordRetry.isPro);
+          } catch (e) {
+            console.error(`[WEBHOOK] ensure livraison (idempotent): ${e.message}`);
+          }
+        }
         console.log(`Événement ${event.id} déjà traité à ${eventMarkResult.event.processed_at}`);
         return reply.send({ received: true, idempotent: true });
       }
 
-      // Si la commande est déjà payée, ne rien faire
       if (order.status === "paid") {
+        try {
+          await Delivery.ensureForOrder(order.id, order.isPro);
+        } catch (e) {
+          console.error(`[WEBHOOK] ensure livraison (déjà payée): ${e.message}`);
+        }
         console.log(`Commande ${order.id} déjà payée, webhook idempotent`);
         return reply.send({ received: true, alreadyPaid: true });
       }
@@ -876,17 +928,16 @@ export const stripeWebhook = async (request, reply) => {
         // Créer automatiquement la livraison avec date estimée
         // Tous les utilisateurs : 72h max
         try {
-          const delivery = await Delivery.createFromOrder(order.id, order.isPro);
+          const delivery = await Delivery.ensureForOrder(order.id, order.isPro);
           if (delivery) {
             console.log(
-              `Livraison créée pour la commande ${order.id} ` +
+              `Livraison assurée pour la commande ${order.id} ` +
               `(date estimée: ${delivery.estimatedDeliveryDate}, ` +
               `type: ${order.isPro ? "Pro" : "Particulier"} - 72h)`
             );
           }
         } catch (deliveryError) {
-          // Ne pas bloquer le processus si la création de livraison échoue
-          console.error(`Erreur lors de la création de la livraison pour la commande ${order.id}:`, deliveryError);
+          console.error(`Erreur livraison commande ${order.id}:`, deliveryError);
         }
 
         console.log(`[AUDIT] Commande ${order.id} confirmée et panier vidé`);
