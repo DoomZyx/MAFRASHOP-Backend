@@ -212,7 +212,7 @@ export const login = async (request, reply) => {
 
 export const googleCallback = async (request, reply) => {
   try {
-    const { code } = request.body;
+    const { code } = request.query;
 
     if (!code) {
       return reply.code(400).send({
@@ -258,7 +258,7 @@ export const googleCallback = async (request, reply) => {
         headers: {
           Authorization: `Bearer ${tokenData.access_token}`,
         },
-      }
+      },
     );
 
     const googleUser = await userInfoResponse.json();
@@ -307,8 +307,17 @@ export const googleCallback = async (request, reply) => {
       }
     }
 
-    const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
-    setAuthCookies(reply, tokens.accessToken, tokens.refreshToken, tokens.accessTokenExpiresIn);
+    const tokens = await generateTokens(
+      user.id,
+      request.ip,
+      request.headers["user-agent"],
+    );
+    setAuthCookies(
+      reply,
+      tokens.accessToken,
+      tokens.refreshToken,
+      tokens.accessTokenExpiresIn,
+    );
 
     reply.type("application/json");
     reply.send({
@@ -370,8 +379,17 @@ export const adminLogin = async (request, reply) => {
       });
     }
 
-    const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
-    setAuthCookies(reply, tokens.accessToken, tokens.refreshToken, tokens.accessTokenExpiresIn);
+    const tokens = await generateTokens(
+      user.id,
+      request.ip,
+      request.headers["user-agent"],
+    );
+    setAuthCookies(
+      reply,
+      tokens.accessToken,
+      tokens.refreshToken,
+      tokens.accessTokenExpiresIn,
+    );
 
     reply.type("application/json");
     reply.send({
@@ -445,7 +463,7 @@ export const adminGoogleCallback = async (request, reply) => {
         headers: {
           Authorization: `Bearer ${tokenData.access_token}`,
         },
-      }
+      },
     );
 
     const googleUser = await userInfoResponse.json();
@@ -490,8 +508,17 @@ export const adminGoogleCallback = async (request, reply) => {
       user = await User.findById(user.id);
     }
 
-    const tokens = await generateTokens(user.id, request.ip, request.headers["user-agent"]);
-    setAuthCookies(reply, tokens.accessToken, tokens.refreshToken, tokens.accessTokenExpiresIn);
+    const tokens = await generateTokens(
+      user.id,
+      request.ip,
+      request.headers["user-agent"],
+    );
+    setAuthCookies(
+      reply,
+      tokens.accessToken,
+      tokens.refreshToken,
+      tokens.accessTokenExpiresIn,
+    );
 
     reply.type("application/json");
     reply.send({
@@ -517,7 +544,7 @@ export const adminGoogleCallback = async (request, reply) => {
 export const adminMe = async (request, reply) => {
   try {
     const user = request.user;
-    
+
     if (user.role !== "admin") {
       return reply.code(403).send({
         success: false,
@@ -543,6 +570,13 @@ export const adminMe = async (request, reply) => {
 
 export const getMe = async (request, reply) => {
   try {
+    if (!request.user) {
+      return reply.type("application/json").send({
+        success: false,
+        message: "Non authentifié",
+      });
+    }
+
     const user = await User.findById(request.user.id);
 
     if (!user) {
@@ -553,7 +587,7 @@ export const getMe = async (request, reply) => {
     }
 
     reply.type("application/json");
-    reply.header('Cache-Control', 'no-store')
+    reply.header("Cache-Control", "no-store");
     reply.send({
       success: true,
       data: {

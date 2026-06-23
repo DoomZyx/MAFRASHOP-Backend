@@ -19,7 +19,7 @@ import {
   updateUserRole,
   createAdminUser,
 } from "../controllers/auth.js";
-import { verifyToken, isAdmin } from "../middleware/auth.js";
+import { verifyToken, optionalAuth, isAdmin } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 
 export default async function authRoutes(fastify, options) {
@@ -30,9 +30,13 @@ export default async function authRoutes(fastify, options) {
 
   fastify.post("/auth/login", { preHandler: authRateLimit }, login);
 
-  fastify.post("/auth/google/callback", { preHandler: authRateLimit }, googleCallback);
+  fastify.get(
+    "/auth/google/callback",
+    { preHandler: authRateLimit },
+    googleCallback,
+  );
 
-  fastify.get("/auth/me", { preHandler: verifyToken }, getMe);
+  fastify.get("/auth/me", { preHandler: optionalAuth }, getMe);
 
   fastify.post("/auth/logout", { preHandler: verifyToken }, logout);
 
@@ -47,65 +51,65 @@ export default async function authRoutes(fastify, options) {
   fastify.put(
     "/auth/profile/company",
     { preHandler: verifyToken },
-    updateCompanyProfile
+    updateCompanyProfile,
   );
 
-  fastify.post(
-    "/auth/pro/request",
-    { preHandler: verifyToken },
-    requestPro
-  );
+  fastify.post("/auth/pro/request", { preHandler: verifyToken }, requestPro);
 
   // Endpoint de test : valide automatiquement sans vérification INSEE
   fastify.post(
     "/auth/pro/test-request",
     { preHandler: verifyToken },
-    testProRequest
+    testProRequest,
   );
 
   // Endpoint admin : valider/rejeter manuellement une demande
   fastify.post(
     "/auth/pro/validate",
     { preHandler: [verifyToken, isAdmin] },
-    validateProManually
+    validateProManually,
   );
 
   // Endpoint admin : reprendre la vérification INSEE (quand verification_mode = manual, decision_source = null)
   fastify.post(
     "/auth/pro/retry-insee",
     { preHandler: [verifyToken, isAdmin] },
-    retryProInsee
+    retryProInsee,
   );
 
   // Validation manuelle d'un numéro de TVA intracommunautaire (admin uniquement)
   fastify.post(
     "/auth/admin/validate-vat",
     { preHandler: [verifyToken, isAdmin] },
-    validateVatManually
+    validateVatManually,
   );
 
   // Admin routes (rate limiting plus strict)
   const adminRateLimit = rateLimit({ max: 3, windowMs: 15 * 60 * 1000 }); // 3 tentatives / 15 min
   fastify.post("/auth/admin/login", { preHandler: adminRateLimit }, adminLogin);
-  fastify.post("/auth/admin/google/callback", { preHandler: adminRateLimit }, adminGoogleCallback);
+  fastify.post(
+    "/auth/admin/google/callback",
+    { preHandler: adminRateLimit },
+    adminGoogleCallback,
+  );
   fastify.get("/auth/admin/me", { preHandler: verifyToken }, adminMe);
   fastify.get("/auth/admin/check", { preHandler: verifyToken }, adminMe);
-  
+
   // Admin: Gestion des utilisateurs
   fastify.get(
     "/admin/users",
     { preHandler: [verifyToken, isAdmin] },
-    getAllUsers
+    getAllUsers,
   );
   fastify.post(
     "/admin/users",
     { preHandler: [verifyToken, isAdmin] },
-    createAdminUser
+    createAdminUser,
   );
   fastify.patch(
     "/admin/users/:userId/role",
     { preHandler: [verifyToken, isAdmin] },
-    updateUserRole
+    updateUserRole,
   );
 }
 
