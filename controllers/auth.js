@@ -319,14 +319,11 @@ export const googleCallback = async (request, reply) => {
       tokens.accessTokenExpiresIn,
     );
 
-    reply.type("application/json");
-    reply.send({
-      success: true,
-      message: "Authentification Google réussie",
-      data: {
-        user: User.toJSON(user),
-      },
-    });
+    // Après avoir défini les cookies d'authentification, rediriger vers le front
+    const frontendUrl =
+      process.env.FRONTEND_URL ||
+      (isProduction ? "https://mafraest.com" : "http://localhost:5173");
+    return reply.redirect(302, `${frontendUrl}/?auth=google_success`);
   } catch (error) {
     console.error("Erreur lors de l'authentification Google:", error);
     reply.type("application/json");
@@ -520,16 +517,13 @@ export const adminGoogleCallback = async (request, reply) => {
       tokens.accessTokenExpiresIn,
     );
 
-    reply.type("application/json");
-    reply.send({
-      success: true,
-      message: "Authentification admin Google réussie",
-      user: {
-        id: user.id,
-        email: user.email,
-        isAdmin: true,
-      },
-    });
+    const adminFrontendUrl =
+      process.env.ADMIN_FRONTEND_URL ||
+      process.env.FRONTEND_URL ||
+      (isProduction
+        ? "https://mafraest.com/admin"
+        : "http://localhost:5173/admin");
+    return reply.redirect(302, `${adminFrontendUrl}/?auth=google_success`);
   } catch (error) {
     console.error("Erreur lors de l'authentification admin Google:", error);
     reply.type("application/json");
