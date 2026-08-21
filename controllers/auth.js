@@ -4,7 +4,6 @@ import { validateCompanyAsync } from "../middleware/auth.js";
 import BlacklistedToken from "../models/blacklistedTokens.js";
 import { generateJTI } from "../models/blacklistedTokens.js";
 import UserSession from "../models/userSessions.js";
-import { sendProRequest } from "../services/notifyAdmin.js";
 
 const COOKIE_ACCESS = "mafra_at"; const COOKIE_REFRESH = "mafra_rt"; const isProduction = process.env.NODE_ENV === "production"; const isSecure = process.env.COOKIE_SECURE === "true";
 
@@ -44,7 +43,7 @@ const clearAuthCookies = (reply) => {
  * @param {string} [userAgent] - User agent (optionnel, pour tracking)
  * @returns {Object} { accessToken, refreshToken, accessTokenExpiresIn }
  */
-const generateTokens = async (userId, ipAddress = null, userAgent = null) => {
+const generateTokens = async (userId, ipAddress, userAgent = null) => {
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET non configuré");
   }

@@ -6,24 +6,14 @@ import multipart from "@fastify/multipart";
 import pool from "./db.js";
 import productsRoutes from "./routes/products.js";
 import authRoutes from "./routes/auth.js";
-import cartRoutes from "./routes/cart.js";
 import favoritesRoutes from "./routes/favorites.js";
 import websocketRoutes from "./routes/websocket.js";
-import paymentRoutes from "./routes/payment.js";
-import ordersRoutes from "./routes/orders.js";
-import invoicesRoutes from "./routes/invoices.js";
-import deliveriesRoutes from "./routes/deliveries.js";
 import adminProductsRoutes from "./routes/admin/products.js";
-import adminStockRoutes from "./routes/admin/stock.js";
-import adminStatsRoutes from "./routes/admin/stats.js";
-import adminOrdersRoutes from "./routes/admin/orders.js";
-import adminInvoicesRoutes from "./routes/admin/invoices.js";
 import adminUploadRoutes from "./routes/admin/upload.js";
-import adminProMinimumQuantitiesRoutes from "./routes/admin/proMinimumQuantities.js";
-import contactRoutes from "./routes/contact.js";
 import { sendToUser } from "./routes/websocket.js";
 
 export { sendToUser };
+
 
 async function connectDB() {
   try {
@@ -78,7 +68,7 @@ const normalizedCorsOrigins = corsOrigins.map(normalizeOrigin);
 await fastify.register(cors, {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
-
+    
     const normalizedOrigin = normalizeOrigin(origin);
     if (normalizedCorsOrigins.includes(normalizedOrigin)) {
       return cb(null, normalizedOrigin);
@@ -138,8 +128,7 @@ fastify.addHook("onRequest", async (request, reply) => {
   reply.header("Permissions-Policy", 
     "geolocation=(), " +
     "microphone=(), " +
-    "camera=(), " +
-    "payment=()"
+    "camera=(), " 
   );
 });
 
@@ -170,21 +159,10 @@ await fastify.register(
   async function (fastify) {
     await fastify.register(productsRoutes);
     await fastify.register(authRoutes);
-    await fastify.register(cartRoutes);
     await fastify.register(favoritesRoutes);
     await fastify.register(websocketRoutes);
-    await fastify.register(paymentRoutes);
-    await fastify.register(ordersRoutes);
-    await fastify.register(invoicesRoutes);
-    await fastify.register(deliveriesRoutes);
     await fastify.register(adminProductsRoutes);
-    await fastify.register(adminStockRoutes);
-    await fastify.register(adminStatsRoutes);
-    await fastify.register(adminOrdersRoutes);
-    await fastify.register(adminInvoicesRoutes);
     await fastify.register(adminUploadRoutes);
-    await fastify.register(adminProMinimumQuantitiesRoutes);
-    await fastify.register(contactRoutes);
   },
   { prefix: "/api" }
 );
@@ -193,3 +171,9 @@ await fastify.register(
 await connectDB();
 
 export default fastify;
+
+console.log("GOOGLE CONFIG:", {
+  clientId: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET ? "PRESENT" : "MISSING",
+  redirectUri: process.env.GOOGLE_REDIRECT_URI,
+});
